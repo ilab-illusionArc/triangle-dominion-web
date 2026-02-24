@@ -1050,10 +1050,6 @@ watch(
 
           <button class="btn ghost neonBtn" @click="resetMatch" :disabled="phase !== 'playing'">Reset</button>
           <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
-
-          <div v-if="message" class="pill warn neonWarn zapMsg">
-            <span class="miniZap">✨</span> {{ message }}
-          </div>
         </div>
       </div>
 
