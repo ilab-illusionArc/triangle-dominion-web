@@ -1,4 +1,4 @@
-<!-- app/pages/play/index.vue -->
+<!-- app/pages/play.vue -->
 <script setup lang="ts">
 useHead({ title: 'Triangle Dominion — vs AI' })
 
@@ -26,7 +26,6 @@ function toggleBgm() {
   audio.unlockAudio()
   const next = !audio.bgmEnabled.value
   audio.setBgmEnabled(next)
-  // click feedback only if SFX is on
   if (audio.sfxEnabled.value) audio.playSfx('ui_click')
 }
 
@@ -359,31 +358,6 @@ async function animateDiceTo(finalValue: number) {
   window.setTimeout(() => (diceSettle.value = false), 260)
 }
 
-const canRoll = computed(() => {
-  if (phase.value !== 'playing') return false
-  if (rolled.value != null && linesLeft.value > 0) return false
-  if (!currentPlayer.value) return false
-  return !currentPlayer.value.isAI
-})
-
-async function rollDice() {
-  if (phase.value !== 'playing') return
-  if (rolled.value != null && linesLeft.value > 0) return
-
-  audio.unlockAudio()
-  audio.playSfx('dice_roll')
-
-  const n = Math.floor(Math.random() * 6) + 1
-  await animateDiceTo(n)
-
-  audio.playSfx('dice_land')
-
-  linesLeft.value = n
-  selectedDotId.value = null
-  flash(`${currentPlayer.value.name}`)
-  if (currentPlayer.value.isAI) void aiPlayTurn()
-}
-
 /* =========================================================
    EDGE STATE
 ========================================================= */
@@ -605,9 +579,11 @@ function legalMovesList(): Move[] {
   return legal
 }
 
+/** ✅ How many valid edges are left on the whole board right now */
+const remainingLegalMovesCount = computed(() => legalMovesList().length)
+
 function hasAnyLegalMove() {
-  for (const m of allEdgesOnce.value) if (isLegalMove(m.a, m.b)) return true
-  return false
+  return remainingLegalMovesCount.value > 0
 }
 
 function endGameIfNoMoves() {
@@ -620,6 +596,48 @@ function endGameIfNoMoves() {
     audio.playSfx('game_over')
     audio.playSfx('win_fanfare', 0.85)
   }
+}
+
+/* ✅ Can roll only if there is at least 1 legal move left */
+const canRoll = computed(() => {
+  if (phase.value !== 'playing') return false
+  if (rolled.value != null && linesLeft.value > 0) return false
+  if (!currentPlayer.value) return false
+  if (currentPlayer.value.isAI) return false
+  return remainingLegalMovesCount.value > 0
+})
+
+/**
+ * ✅ IMPORTANT RULE YOU ASKED:
+ * Dice must NEVER give a number greater than the remaining legal moves.
+ * - If remaining moves = 0 => game over immediately.
+ * - Else roll between 1..min(6, remainingMoves)
+ */
+async function rollDice() {
+  if (phase.value !== 'playing') return
+  if (rolled.value != null && linesLeft.value > 0) return
+
+  // if no moves, end immediately
+  if (remainingLegalMovesCount.value <= 0) {
+    endGameIfNoMoves()
+    return
+  }
+
+  audio.unlockAudio()
+  audio.playSfx('dice_roll')
+
+  const cap = Math.min(6, remainingLegalMovesCount.value)
+  const n = Math.floor(Math.random() * cap) + 1
+
+  await animateDiceTo(n)
+  audio.playSfx('dice_land')
+
+  linesLeft.value = n
+  selectedDotId.value = null
+  flash(`${currentPlayer.value.name}`)
+
+  // if AI, start acting
+  if (currentPlayer.value.isAI) void aiPlayTurn()
 }
 
 /* =========================================================
@@ -650,11 +668,30 @@ const selectedDotId = ref<number | null>(null)
 const selectedDot = computed(() =>
   selectedDotId.value == null ? null : dotsById.value.get(selectedDotId.value) || null
 )
-const neighborIds = computed(() => new Set(selectedDot.value?.neighbors ?? []))
+
+/** ✅ Only highlight neighbors that are actually eligible to connect right now */
+const eligibleNeighborIds = computed(() => {
+  const s = new Set<number>()
+  if (phase.value !== 'playing') return s
+  if (!selectedDot.value) return s
+  if (currentPlayer.value?.isAI) return s
+  if (rolled.value == null || linesLeft.value <= 0) return s // no drawing yet
+  const a = selectedDot.value.id
+  for (const n of selectedDot.value.neighbors) {
+    if (isLegalMove(a, n)) s.add(n)
+  }
+  return s
+})
 
 function onDotClick(id: number) {
   if (phase.value !== 'playing') return
   if (currentPlayer.value.isAI) return
+
+  // ✅ if there are truly no moves, end now (even if player still had linesLeft)
+  if (!hasAnyLegalMove()) {
+    endGameIfNoMoves()
+    return
+  }
 
   audio.unlockAudio()
 
@@ -720,6 +757,12 @@ function onDotClick(id: number) {
   if (got > 0) flash(`🎉 +${got}`)
 
   selectedDotId.value = b
+
+  // ✅ If no legal moves remain after drawing, game ends immediately (even if linesLeft > 0)
+  if (!hasAnyLegalMove()) {
+    endGameIfNoMoves()
+    return
+  }
 
   if (linesLeft.value === 0) void endTurn()
 }
@@ -846,6 +889,13 @@ async function aiPlayTurn() {
     else if (got > 1) audio.playSfx('triangle_multi', 0.95)
 
     if (got > 0) flash(`🤖 +${got}`)
+
+    // ✅ if board is locked after this move, end immediately
+    if (!hasAnyLegalMove()) {
+      endGameIfNoMoves()
+      return
+    }
+
     await sleep(150)
   }
 
@@ -971,7 +1021,6 @@ onMounted(() => {
 </script>
 
 <template>
-  <!-- pointerdown unlocks audio reliably on mobile + desktop -->
   <div class="wrap" @pointerdown="audio.unlockAudio()">
     <!-- background -->
     <div class="bgEnergy">
@@ -994,7 +1043,7 @@ onMounted(() => {
         <div class="boardPicker neonCard">
           <div class="pickerTitle">
             <div class="pickerLabel neonText">Shapes</div>
-            <div class="pickerHint">Click a dot to reveal neighbors, then click a neighbor to draw.</div>
+            <div class="pickerHint">Roll dice → draw exactly N edges → triangles auto-claim.</div>
           </div>
 
           <div class="presetList">
@@ -1019,7 +1068,6 @@ onMounted(() => {
               <span class="zap">🎲</span> Start Match
             </button>
 
-            <!-- ✅ separate toggles -->
             <button class="btn ghost neonBtn" @click="toggleSfx">
               {{ audio.sfxEnabled.value ? '🔊 SFX: On' : '🔇 SFX: Off' }}
             </button>
@@ -1027,7 +1075,9 @@ onMounted(() => {
               {{ audio.bgmEnabled.value ? '🎵 BGM: On' : '🚫🎵 BGM: Off' }}
             </button>
 
-            <div class="note">Roll dice → draw exactly N edges → triangles auto-claim.</div>
+            <div class="note">
+              Dice is capped by remaining valid moves (so you’ll never get stuck with extra lines).
+            </div>
           </div>
         </div>
 
@@ -1037,7 +1087,7 @@ onMounted(() => {
             <div class="previewMeta">
               <span class="metaPill">Dots: <b>{{ board.dots.length }}</b></span>
               <span class="metaPill">Triangles: <b>{{ triangles.length }}</b></span>
-              <span class="metaPill">Type: <b>{{ selectedPreset.tag }}</b></span>
+              <span class="metaPill">Valid moves left: <b>{{ remainingLegalMovesCount }}</b></span>
             </div>
           </div>
 
@@ -1079,6 +1129,7 @@ onMounted(() => {
           <div class="hud">
             <span class="hudPill"> Lines: <b class="pulseNum">{{ linesLeft }}</b> </span>
             <span class="hudPill" v-if="rolled != null"> Rolled: <b class="pulseNum">{{ rolled }}</b> </span>
+            <span class="hudPill"> Moves left: <b class="pulseNum">{{ remainingLegalMovesCount }}</b> </span>
           </div>
         </div>
 
@@ -1119,7 +1170,6 @@ onMounted(() => {
           <button class="btn ghost neonBtn" @click="resetMatch" :disabled="phase !== 'playing'">Reset</button>
           <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
 
-          <!-- ✅ small toggles -->
           <button class="btn ghost neonBtn" @click="toggleSfx">
             {{ audio.sfxEnabled.value ? '🔊' : '🔇' }}
           </button>
@@ -1220,16 +1270,16 @@ onMounted(() => {
             />
           </g>
 
-          <!-- Neighbor hints -->
+          <!-- Eligible neighbor hints only -->
           <g v-if="selectedDot && phase === 'playing' && !currentPlayer.isAI">
             <line
-              v-for="nid in selectedDot.neighbors"
+              v-for="nid in Array.from(eligibleNeighborIds)"
               :key="`hint-${selectedDot.id}-${nid}`"
               :x1="selectedDot.x"
               :y1="selectedDot.y"
               :x2="dotsById.get(nid)!.x"
               :y2="dotsById.get(nid)!.y"
-              :stroke="hasEdge(selectedDot.id, nid) ? 'rgba(255,255,255,0.06)' : 'rgba(0,240,255,0.55)'"
+              stroke="rgba(0,240,255,0.55)"
               stroke-width="4"
               stroke-linecap="round"
               class="hintLine hintPulse"
@@ -1245,11 +1295,27 @@ onMounted(() => {
               :cx="d.x"
               :cy="d.y"
               :r="11"
-              :opacity="selectedDotId == null ? 1 : d.id === selectedDotId || neighborIds.has(d.id) ? 1 : 0.22"
-              :fill="d.id === selectedDotId ? '#ffffff' : neighborIds.has(d.id) ? '#00F0FF' : '#C9D3E8'"
+              :opacity="
+                selectedDotId == null
+                  ? 1
+                  : d.id === selectedDotId || eligibleNeighborIds.has(d.id)
+                    ? 1
+                    : 0.18
+              "
+              :fill="
+                d.id === selectedDotId
+                  ? '#ffffff'
+                  : eligibleNeighborIds.has(d.id)
+                    ? '#00F0FF'
+                    : '#C9D3E8'
+              "
               stroke="rgba(0,0,0,0.78)"
               stroke-width="2"
-              :class="['dotCircle', d.id === selectedDotId ? 'dotSelected' : '', neighborIds.has(d.id) ? 'dotNeighbor' : '']"
+              :class="[
+                'dotCircle',
+                d.id === selectedDotId ? 'dotSelected' : '',
+                eligibleNeighborIds.has(d.id) ? 'dotNeighbor' : ''
+              ]"
               @click.stop="onDotClick(d.id)"
               filter="url(#glow)"
             />
@@ -1261,7 +1327,13 @@ onMounted(() => {
               :cy="d.y"
               :r="18"
               class="dotHalo"
-              :opacity="selectedDotId == null ? 0.10 : d.id === selectedDotId || neighborIds.has(d.id) ? 0.20 : 0.05"
+              :opacity="
+                selectedDotId == null
+                  ? 0.10
+                  : d.id === selectedDotId || eligibleNeighborIds.has(d.id)
+                    ? 0.18
+                    : 0.04
+              "
             />
           </g>
         </svg>
@@ -1293,7 +1365,7 @@ onMounted(() => {
 </template>
 
 <style>
-/* ✅ your same styles (unchanged) */
+/* same styling as before, with reduced pulses */
 *,
 html { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1398,8 +1470,11 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   background: rgba(255,255,255,0.05);
   font-size: 12px; opacity: 0.92;
 }
-.pulseNum{ text-shadow: 0 0 18px rgba(0,240,255,0.22); animation: numPulse 1.2s ease-in-out infinite; }
-@keyframes numPulse{ 0%,100%{ filter: brightness(1); } 50%{ filter: brightness(1.14); } }
+.pulseNum{
+  text-shadow: 0 0 14px rgba(0,240,255,0.18);
+  animation: numPulse 1.8s ease-in-out infinite;
+}
+@keyframes numPulse{ 0%,100%{ filter: brightness(1); } 50%{ filter: brightness(1.06); } }
 
 .modeTag{
   font-size: 12px; padding: 3px 8px; border-radius: 999px;
@@ -1412,9 +1487,9 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .controls{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
 .scorebar{ display:flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .score{ display:flex; gap: 8px; align-items:center; padding: 10px 12px; border-radius: 14px; }
-.scorePulse{ animation: cardBreath 2.8s ease-in-out infinite; }
-@keyframes cardBreath{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-1px); } }
-.neonScore{ text-shadow: 0 0 18px rgba(0,240,255,0.22), 0 0 16px rgba(255,61,166,0.12); }
+.scorePulse{ animation: cardBreath 3.4s ease-in-out infinite; }
+@keyframes cardBreath{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-0.6px); } }
+.neonScore{ text-shadow: 0 0 14px rgba(0,240,255,0.18), 0 0 12px rgba(255,61,166,0.10); }
 
 .muted{ opacity: 0.7; }
 .dot{ width: 12px; height: 12px; border-radius: 999px; display:inline-block; }
@@ -1429,12 +1504,12 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   gap: 8px;
   align-items:center;
 }
-.neonPill{ box-shadow: 0 0 18px rgba(0,240,255,0.08); }
+.neonPill{ box-shadow: 0 0 14px rgba(0,240,255,0.07); }
 .pill.big{ padding: 10px 12px; }
-.turnPulse{ animation: turnPulse 1.3s ease-in-out infinite; }
+.turnPulse{ animation: turnPulse 1.9s ease-in-out infinite; }
 @keyframes turnPulse{
-  0%,100%{ box-shadow: 0 0 18px rgba(0,240,255,0.10); transform: translateY(0); }
-  50%{ box-shadow: 0 0 28px rgba(0,240,255,0.16); transform: translateY(-1px); }
+  0%,100%{ box-shadow: 0 0 14px rgba(0,240,255,0.08); transform: translateY(0); }
+  50%{ box-shadow: 0 0 20px rgba(0,240,255,0.12); transform: translateY(-0.6px); }
 }
 
 .btn{
@@ -1560,24 +1635,24 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 /* triangles */
 .triFill{ transform-box: fill-box; transform-origin: center; transition: opacity 180ms ease; }
 .triPop{ animation: triPop 520ms cubic-bezier(.18,.9,.18,1.02); filter: drop-shadow(0 0 20px rgba(0,240,255,0.20)); }
-@keyframes triPop{ 0%{ transform: scale(0.86); opacity: 0.06; } 36%{ transform: scale(1.12); opacity: 0.30; } 100%{ transform: scale(1.00); opacity: 0.22; } }
+@keyframes triPop{ 0%{ transform: scale(0.90); opacity: 0.06; } 36%{ transform: scale(1.07); opacity: 0.30; } 100%{ transform: scale(1.00); opacity: 0.22; } }
 
 /* neighbor hint */
 .hintLine{ filter: drop-shadow(0 0 14px rgba(0,240,255,0.20)); transform-origin: center; }
-.hintPulse{ animation: hintZoom 0.9s ease-in-out infinite; }
-@keyframes hintZoom{ 0%,100%{ transform: scale(1); opacity: 0.42; } 50%{ transform: scale(1.06); opacity: 0.66; } }
+.hintPulse{ animation: hintZoom 1.3s ease-in-out infinite; }
+@keyframes hintZoom{ 0%,100%{ transform: scale(1); opacity: 0.34; } 50%{ transform: scale(1.03); opacity: 0.52; } }
 
 /* dots */
 .dotCircle{ cursor:pointer; transition: opacity 160ms ease, filter 160ms ease; transform-origin: center; }
-.dotSelected{ animation: dotZoomSel 0.9s ease-in-out infinite; }
+.dotSelected{ animation: dotZoomSel 1.4s ease-in-out infinite; }
 @keyframes dotZoomSel{
-  0%,100%{ transform: scale(1.06); filter: brightness(1.25) drop-shadow(0 0 24px rgba(0,240,255,0.26)); }
-  50%{ transform: scale(1.12); filter: brightness(1.35) drop-shadow(0 0 30px rgba(0,240,255,0.34)); }
+  0%,100%{ transform: scale(1.03); filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+  50%{ transform: scale(1.07); filter: brightness(1.24) drop-shadow(0 0 22px rgba(0,240,255,0.24)); }
 }
-.dotNeighbor{ animation: dotZoomNb 1.1s ease-in-out infinite; }
+.dotNeighbor{ animation: dotZoomNb 1.6s ease-in-out infinite; }
 @keyframes dotZoomNb{
-  0%,100%{ transform: scale(1.02); filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.22)); }
-  50%{ transform: scale(1.08); filter: brightness(1.28) drop-shadow(0 0 24px rgba(0,240,255,0.30)); }
+  0%,100%{ transform: scale(1.01); filter: brightness(1.12) drop-shadow(0 0 14px rgba(0,240,255,0.16)); }
+  50%{ transform: scale(1.04); filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.22)); }
 }
 
 .dotHalo{
@@ -1585,11 +1660,11 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   stroke: rgba(0,240,255,0.12);
   stroke-width: 2;
   stroke-dasharray: 14 14;
-  animation: haloSpin 2.4s linear infinite;
+  animation: haloSpin 2.8s linear infinite;
   filter: blur(0.2px);
   pointer-events:none;
 }
-@keyframes haloSpin{ from{ stroke-dashoffset: 0; opacity: 0.10; } to{ stroke-dashoffset: -56; opacity: 0.24; } }
+@keyframes haloSpin{ from{ stroke-dashoffset: 0; opacity: 0.08; } to{ stroke-dashoffset: -56; opacity: 0.18; } }
 
 /* confetti */
 .confetti{ animation: confPop 650ms ease-out both; transform-origin: center; }
