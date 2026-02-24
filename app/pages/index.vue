@@ -13,6 +13,13 @@ onMounted(() => {
   void audio.playBgm('bgm_menu')
 })
 
+function toggleSound() {
+  audio.unlockAudio()
+  const next = !audio.enabled.value // ✅ IMPORTANT
+  audio.setEnabled(next)
+  if (next) audio.playSfx('ui_click')
+}
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -33,7 +40,6 @@ const step = ref<'menu' | 'board'>('menu')
 const showHow = ref(false)
 
 function goPlay(boardId: string) {
-  // stop menu music softly before leaving
   audio.stopBgm(false)
   router.push({ path: '/play', query: { board: boardId, autostart: '1' } })
 }
@@ -111,11 +117,9 @@ function makeTriField(opts?: { rows?: number; cols?: number; spacing?: number; m
     for (let c = 0; c < cols; c++) {
       const a = idx(r, c)
 
-      // left/right
       if (c - 1 >= 0) add(a, idx(r, c - 1))
       if (c + 1 < cols) add(a, idx(r, c + 1))
 
-      // up diagonals
       if (r - 1 >= 0) {
         if (r % 2 === 0) {
           if (c - 1 >= 0) add(a, idx(r - 1, c - 1))
@@ -126,7 +130,6 @@ function makeTriField(opts?: { rows?: number; cols?: number; spacing?: number; m
         }
       }
 
-      // down diagonals
       if (r + 1 < rows) {
         if (r % 2 === 0) {
           if (c - 1 >= 0) add(a, idx(r + 1, c - 1))
@@ -169,7 +172,6 @@ function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: Ra
     return { id: idMap.get(d.id)!, x: d.x, y: d.y, neighbors: Array.from(new Set(nid)).sort((a, b) => a - b) }
   })
 
-  // recenter with padding
   const minX = Math.min(...dots.map((d) => d.x))
   const minY = Math.min(...dots.map((d) => d.y))
   const maxX = Math.max(...dots.map((d) => d.x))
@@ -184,7 +186,6 @@ function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: Ra
     d.y = d.y - minY + pad
   }
 
-  // prune isolated
   const pruned: Dot[] = dots.filter((d) => d.neighbors.length > 0)
   if (pruned.length !== dots.length) {
     const map2 = new Map<number, number>()
@@ -229,7 +230,7 @@ function polygonMask(field: ReturnType<typeof makeTriField>, sides: number, radi
   return remapFilteredBoard(field, (d) => inside(d.x, d.y))
 }
 
-/* presets (same params as /play) */
+/* presets */
 function presetCircle() {
   const field = makeTriField({ rows: 13, cols: 15, spacing: 52, margin: 86 })
   const dots = field.dots
@@ -282,9 +283,9 @@ function buildBoardById(id: string) {
   return presetHexagon()
 }
 
-/* Precompute previews once (fast and exact) */
+/* previews */
 type Preview = { dots: Dot[]; width: number; height: number; edges: Array<{ a: number; b: number; key: string }> }
-function makeEdgeKey(a: number, b: number) {
+function makePreviewEdgeKey(a: number, b: number) {
   const x = Math.min(a, b)
   const y = Math.max(a, b)
   return `${x}_${y}`
@@ -294,12 +295,10 @@ function previewEdges(dots: Dot[]) {
   const edges: Array<{ a: number; b: number; key: string }> = []
   for (const d of dots) {
     for (const n of d.neighbors) {
-      const a = d.id
-      const b = n
-      const key = makeEdgeKey(a, b)
+      const key = makePreviewEdgeKey(d.id, n)
       if (seen.has(key)) continue
       seen.add(key)
-      edges.push({ a: Math.min(a, b), b: Math.max(a, b), key })
+      edges.push({ a: Math.min(d.id, n), b: Math.max(d.id, n), key })
     }
   }
   return edges
@@ -316,7 +315,7 @@ const previews = computed<Record<string, Preview>>(() => {
 </script>
 
 <template>
-  <div class="wrap">
+  <div class="wrap" @pointerdown="audio.unlockAudio()">
     <!-- background -->
     <div class="bgEnergy">
       <div class="bgAurora a1"></div>
@@ -350,13 +349,9 @@ const previews = computed<Record<string, Preview>>(() => {
 
           <div class="tinyNote">Tip: Choose a board by clicking it. The match starts instantly.</div>
 
-          <!-- small sound toggle -->
-          <button
-            class="btn ghost neonBtn"
-            style="margin-top: 6px;"
-            @click="audio.unlockAudio(); audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')"
-          >
-            {{ audio.enabled ? '🔊 Sound: On' : '🔇 Sound: Off' }}
+          <!-- ✅ FIXED: use .value for nested refs -->
+          <button class="btn ghost neonBtn" style="margin-top: 6px;" @click="toggleSound">
+            {{ audio.enabled.value ? '🔊 Sound: On' : '🔇 Sound: Off' }}
           </button>
         </div>
       </div>
@@ -367,14 +362,10 @@ const previews = computed<Record<string, Preview>>(() => {
           <b>vs AI</b>
           <span class="muted">— clean geometry, fast turns</span>
         </div>
-
-        <NuxtLink to="/play" class="miniLink" @click="audio.unlockAudio(); audio.playSfx('ui_click')">
-          Already inside dev? <b>Jump to /play</b>
-        </NuxtLink>
       </div>
     </div>
 
-    <!-- BOARD SELECT: EXACT previews -->
+    <!-- BOARD SELECT -->
     <div v-else class="panel neonCard enter">
       <div class="topRow">
         <div>
@@ -385,8 +376,8 @@ const previews = computed<Record<string, Preview>>(() => {
         <div class="topActions">
           <button class="btn ghost neonBtn" @click="openHow">How to Play</button>
           <button class="btn ghost neonBtn" @click="backToMenu">Back</button>
-          <button class="btn ghost neonBtn" @click="audio.unlockAudio(); audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
-            {{ audio.enabled ? '🔊' : '🔇' }}
+          <button class="btn ghost neonBtn" @click="toggleSound">
+            {{ audio.enabled.value ? '🔊' : '🔇' }}
           </button>
         </div>
       </div>
@@ -582,7 +573,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .enter{ animation: riseIn 420ms ease-out both; }
 @keyframes riseIn{ from{ transform: translateY(12px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
 
-/* UI cards */
+/* cards */
 .neonCard{
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.06);
