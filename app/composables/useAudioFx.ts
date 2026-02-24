@@ -49,13 +49,18 @@ const BGM_FILES: Record<BgmName, string> = {
 }
 
 /**
- * Simple, reliable HTMLAudio engine:
- * - SFX: small pool per sound for overlap
- * - BGM: single looping track with soft fade
- * - persisted mute + volume
+ * HTMLAudio engine:
+ * - SFX: pool per sound
+ * - BGM: single looping track with fade
+ * - Persisted toggles:
+ *    - sfxEnabled (SFX only)
+ *    - bgmEnabled (BGM only)
  */
 export function useAudioFx() {
-  const enabled = useState<boolean>('audio_enabled', () => true)
+  // ✅ separate toggles
+  const sfxEnabled = useState<boolean>('audio_sfx_enabled', () => true)
+  const bgmEnabled = useState<boolean>('audio_bgm_enabled', () => true)
+
   const sfxVol = useState<number>('audio_sfx_vol', () => 0.7)
   const bgmVol = useState<number>('audio_bgm_vol', () => 0.45)
 
@@ -65,35 +70,37 @@ export function useAudioFx() {
   const bgm = useState<HTMLAudioElement | null>('audio_bgm', () => null)
   const bgmName = useState<BgmName | null>('audio_bgm_name', () => null)
 
+  function clamp01(n: number) {
+    if (!Number.isFinite(n)) return 0.5
+    return Math.max(0, Math.min(1, n))
+  }
+
   function loadPrefs() {
     if (!import.meta.client) return
-    const e = localStorage.getItem('td_audio_enabled')
+    const se = localStorage.getItem('td_audio_sfx_enabled')
+    const be = localStorage.getItem('td_audio_bgm_enabled')
     const sv = localStorage.getItem('td_audio_sfx_vol')
     const bv = localStorage.getItem('td_audio_bgm_vol')
-    if (e != null) enabled.value = e === '1'
+
+    if (se != null) sfxEnabled.value = se === '1'
+    if (be != null) bgmEnabled.value = be === '1'
     if (sv != null) sfxVol.value = clamp01(Number(sv))
     if (bv != null) bgmVol.value = clamp01(Number(bv))
   }
 
   function savePrefs() {
     if (!import.meta.client) return
-    localStorage.setItem('td_audio_enabled', enabled.value ? '1' : '0')
+    localStorage.setItem('td_audio_sfx_enabled', sfxEnabled.value ? '1' : '0')
+    localStorage.setItem('td_audio_bgm_enabled', bgmEnabled.value ? '1' : '0')
     localStorage.setItem('td_audio_sfx_vol', String(sfxVol.value))
     localStorage.setItem('td_audio_bgm_vol', String(bgmVol.value))
   }
 
-  function clamp01(n: number) {
-    if (!Number.isFinite(n)) return 0.5
-    return Math.max(0, Math.min(1, n))
-  }
-
-  /** Call on first user gesture (click/tap) to avoid autoplay blocks */
+  /** Call on first user gesture */
   async function unlockAudio() {
     if (!import.meta.client) return
     if (_unlocked.value) return
     _unlocked.value = true
-
-    // "Warm up" by playing a silent tiny sound (some browsers like it)
     try {
       const a = new Audio()
       a.volume = 0
@@ -101,14 +108,21 @@ export function useAudioFx() {
       await a.play()
       a.pause()
     } catch {
-      // ignore: user gesture still unlocks for later plays
+      // ignore
     }
   }
 
-  function setEnabled(v: boolean) {
-    enabled.value = v
+  // ✅ toggles
+  function setSfxEnabled(v: boolean) {
+    sfxEnabled.value = v
     savePrefs()
-    if (!enabled.value) stopBgm(true)
+  }
+
+  function setBgmEnabled(v: boolean) {
+    bgmEnabled.value = v
+    savePrefs()
+
+    if (!bgmEnabled.value) stopBgm(true)
     else if (bgmName.value) void playBgm(bgmName.value)
   }
 
@@ -116,7 +130,7 @@ export function useAudioFx() {
     if (opts.sfx != null) sfxVol.value = clamp01(opts.sfx)
     if (opts.bgm != null) bgmVol.value = clamp01(opts.bgm)
     savePrefs()
-    if (bgm.value) bgm.value.volume = enabled.value ? bgmVol.value : 0
+    if (bgm.value) bgm.value.volume = bgmEnabled.value ? bgmVol.value : 0
   }
 
   function getFromPool(name: SfxName) {
@@ -124,7 +138,6 @@ export function useAudioFx() {
     if (!sfxPool.value[key]) sfxPool.value[key] = []
     const pool = sfxPool.value[key]
 
-    // reuse ended element; else create new
     for (const a of pool) {
       if (a.paused || a.ended) return a
     }
@@ -136,8 +149,8 @@ export function useAudioFx() {
 
   function playSfx(name: SfxName, volumeMul = 1) {
     if (!import.meta.client) return
-    if (!enabled.value) return
-    // If not unlocked yet, still try; most events will be after a click anyway.
+    if (!sfxEnabled.value) return
+
     const a = getFromPool(name)
     try {
       a.pause()
@@ -152,12 +165,10 @@ export function useAudioFx() {
   async function playBgm(name: BgmName) {
     if (!import.meta.client) return
     bgmName.value = name
-    if (!enabled.value) return
+    if (!bgmEnabled.value) return
 
-    // already playing same
     if (bgm.value && bgm.value.src.includes(BGM_FILES[name])) return
 
-    // stop old
     stopBgm(true)
 
     const a = new Audio(BGM_FILES[name])
@@ -168,10 +179,9 @@ export function useAudioFx() {
 
     try {
       await a.play()
-      // fade in
       fadeTo(a, bgmVol.value, 420)
     } catch {
-      // autoplay blocked until first user gesture — will work after unlockAudio()
+      // autoplay blocked until user gesture
     }
   }
 
@@ -179,6 +189,7 @@ export function useAudioFx() {
     if (!import.meta.client) return
     const a = bgm.value
     if (!a) return
+
     if (immediate) {
       try {
         a.pause()
@@ -186,6 +197,7 @@ export function useAudioFx() {
       bgm.value = null
       return
     }
+
     fadeTo(a, 0, 280).then(() => {
       try {
         a.pause()
@@ -209,19 +221,26 @@ export function useAudioFx() {
     })
   }
 
-  /** helper: call in each page */
   function initAudio() {
     loadPrefs()
   }
 
   return {
-    enabled,
+    // toggles
+    sfxEnabled,
+    bgmEnabled,
+
+    // volumes
     sfxVol,
     bgmVol,
+
     initAudio,
     unlockAudio,
-    setEnabled,
+
+    setSfxEnabled,
+    setBgmEnabled,
     setVolumes,
+
     playSfx,
     playBgm,
     stopBgm

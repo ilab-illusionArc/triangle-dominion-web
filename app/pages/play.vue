@@ -4,6 +4,9 @@ useHead({ title: 'Triangle Dominion — vs AI' })
 
 /* =========================================================
    AUDIO (game bgm + sfx everywhere)
+   ✅ Requires updated useAudioFx() with:
+      - sfxEnabled, bgmEnabled
+      - setSfxEnabled(), setBgmEnabled()
 ========================================================= */
 const audio = useAudioFx()
 
@@ -12,6 +15,20 @@ onMounted(() => {
   // game music (will start after first user gesture if autoplay blocked)
   void audio.playBgm('bgm_game')
 })
+
+function toggleSfx() {
+  audio.unlockAudio()
+  const next = !audio.sfxEnabled.value
+  audio.setSfxEnabled(next)
+  if (next) audio.playSfx('ui_click')
+}
+function toggleBgm() {
+  audio.unlockAudio()
+  const next = !audio.bgmEnabled.value
+  audio.setBgmEnabled(next)
+  // click feedback only if SFX is on
+  if (audio.sfxEnabled.value) audio.playSfx('ui_click')
+}
 
 /* =========================================================
    TYPES
@@ -912,7 +929,7 @@ function edgeStroke(e: Edge) {
 const canRollTitle = computed(() => (canRoll.value ? 'Roll' : ''))
 const selectedPreset = computed(() => BOARD_PRESETS.find((p) => p.id === selectedBoardId.value) ?? BOARD_PRESETS[0])
 
-/* confetti + sfx hook */
+/* confetti */
 const confettiBursts = ref<Array<{ id: number; x: number; y: number; t: number; color: string }>>([])
 let confId = 1
 function confettiAtTriangle(t: Triangle) {
@@ -954,7 +971,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="wrap" @click="audio.unlockAudio()">
+  <!-- pointerdown unlocks audio reliably on mobile + desktop -->
+  <div class="wrap" @pointerdown="audio.unlockAudio()">
     <!-- background -->
     <div class="bgEnergy">
       <div class="bgAurora a1"></div>
@@ -1001,8 +1019,12 @@ onMounted(() => {
               <span class="zap">🎲</span> Start Match
             </button>
 
-            <button class="btn ghost neonBtn" @click="audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
-              {{ audio.enabled ? '🔊 Sound: On' : '🔇 Sound: Off' }}
+            <!-- ✅ separate toggles -->
+            <button class="btn ghost neonBtn" @click="toggleSfx">
+              {{ audio.sfxEnabled.value ? '🔊 SFX: On' : '🔇 SFX: Off' }}
+            </button>
+            <button class="btn ghost neonBtn" @click="toggleBgm">
+              {{ audio.bgmEnabled.value ? '🎵 BGM: On' : '🚫🎵 BGM: Off' }}
             </button>
 
             <div class="note">Roll dice → draw exactly N edges → triangles auto-claim.</div>
@@ -1097,8 +1119,12 @@ onMounted(() => {
           <button class="btn ghost neonBtn" @click="resetMatch" :disabled="phase !== 'playing'">Reset</button>
           <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
 
-          <button class="btn ghost neonBtn" @click="audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
-            {{ audio.enabled ? '🔊' : '🔇' }}
+          <!-- ✅ small toggles -->
+          <button class="btn ghost neonBtn" @click="toggleSfx">
+            {{ audio.sfxEnabled.value ? '🔊' : '🔇' }}
+          </button>
+          <button class="btn ghost neonBtn" @click="toggleBgm">
+            {{ audio.bgmEnabled.value ? '🎵' : '🚫🎵' }}
           </button>
         </div>
       </div>
@@ -1219,21 +1245,11 @@ onMounted(() => {
               :cx="d.x"
               :cy="d.y"
               :r="11"
-              :opacity="
-                selectedDotId == null
-                  ? 1
-                  : d.id === selectedDotId || neighborIds.has(d.id)
-                    ? 1
-                    : 0.22
-              "
+              :opacity="selectedDotId == null ? 1 : d.id === selectedDotId || neighborIds.has(d.id) ? 1 : 0.22"
               :fill="d.id === selectedDotId ? '#ffffff' : neighborIds.has(d.id) ? '#00F0FF' : '#C9D3E8'"
               stroke="rgba(0,0,0,0.78)"
               stroke-width="2"
-              :class="[
-                'dotCircle',
-                d.id === selectedDotId ? 'dotSelected' : '',
-                neighborIds.has(d.id) ? 'dotNeighbor' : ''
-              ]"
+              :class="['dotCircle', d.id === selectedDotId ? 'dotSelected' : '', neighborIds.has(d.id) ? 'dotNeighbor' : '']"
               @click.stop="onDotClick(d.id)"
               filter="url(#glow)"
             />
@@ -1245,13 +1261,7 @@ onMounted(() => {
               :cy="d.y"
               :r="18"
               class="dotHalo"
-              :opacity="
-                selectedDotId == null
-                  ? 0.10
-                  : d.id === selectedDotId || neighborIds.has(d.id)
-                    ? 0.20
-                    : 0.05
-              "
+              :opacity="selectedDotId == null ? 0.10 : d.id === selectedDotId || neighborIds.has(d.id) ? 0.20 : 0.05"
             />
           </g>
         </svg>
@@ -1273,9 +1283,8 @@ onMounted(() => {
           <div class="modalBtns">
             <button class="btn primary neonBtn" @click="resetMatch"><span class="zap">🎉</span> Play Again</button>
             <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
-            <button class="btn ghost neonBtn" @click="audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
-              {{ audio.enabled ? '🔊' : '🔇' }}
-            </button>
+            <button class="btn ghost neonBtn" @click="toggleSfx">{{ audio.sfxEnabled.value ? '🔊' : '🔇' }}</button>
+            <button class="btn ghost neonBtn" @click="toggleBgm">{{ audio.bgmEnabled.value ? '🎵' : '🚫🎵' }}</button>
           </div>
         </div>
       </div>

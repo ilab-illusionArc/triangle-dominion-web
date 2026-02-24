@@ -1,23 +1,34 @@
 <!-- app/pages/index.vue -->
+<!-- app/pages/index.vue -->
 <script setup lang="ts">
 useHead({ title: 'Triangle Dominion' })
 
 /* =========================================================
-   AUDIO (global fx + menu bgm)
+   AUDIO (SFX toggle + BGM toggle)
+   ✅ Requires updated useAudioFx() that has:
+      - sfxEnabled, bgmEnabled
+      - setSfxEnabled(), setBgmEnabled()
 ========================================================= */
 const audio = useAudioFx()
 
 onMounted(() => {
   audio.initAudio()
-  // Menu music (will start after first user gesture if autoplay blocked)
-  void audio.playBgm('bgm_menu')
+  void audio.playBgm('bgm_menu') // will start after first user gesture if autoplay blocked
 })
 
-function toggleSound() {
+function toggleSfx() {
   audio.unlockAudio()
-  const next = !audio.enabled.value // ✅ IMPORTANT
-  audio.setEnabled(next)
+  const next = !audio.sfxEnabled.value
+  audio.setSfxEnabled(next)
   if (next) audio.playSfx('ui_click')
+}
+
+function toggleBgm() {
+  audio.unlockAudio()
+  const next = !audio.bgmEnabled.value
+  audio.setBgmEnabled(next)
+  // click feedback only if SFX is enabled
+  if (audio.sfxEnabled.value) audio.playSfx('ui_click')
 }
 
 /* =========================================================
@@ -349,9 +360,14 @@ const previews = computed<Record<string, Preview>>(() => {
 
           <div class="tinyNote">Tip: Choose a board by clicking it. The match starts instantly.</div>
 
-          <!-- ✅ FIXED: use .value for nested refs -->
-          <button class="btn ghost neonBtn" style="margin-top: 6px;" @click="toggleSound">
-            {{ audio.enabled.value ? '🔊 Sound: On' : '🔇 Sound: Off' }}
+          <!-- ✅ SFX toggle -->
+          <button class="btn ghost neonBtn" style="margin-top: 6px;" @click="toggleSfx">
+            {{ audio.sfxEnabled.value ? '🔊 SFX: On' : '🔇 SFX: Off' }}
+          </button>
+
+          <!-- ✅ BGM toggle -->
+          <button class="btn ghost neonBtn" style="margin-top: 6px;" @click="toggleBgm">
+            {{ audio.bgmEnabled.value ? '🎵 BGM: On' : '🚫🎵 BGM: Off' }}
           </button>
         </div>
       </div>
@@ -376,8 +392,13 @@ const previews = computed<Record<string, Preview>>(() => {
         <div class="topActions">
           <button class="btn ghost neonBtn" @click="openHow">How to Play</button>
           <button class="btn ghost neonBtn" @click="backToMenu">Back</button>
-          <button class="btn ghost neonBtn" @click="toggleSound">
-            {{ audio.enabled.value ? '🔊' : '🔇' }}
+
+          <!-- small toggles in header -->
+          <button class="btn ghost neonBtn" @click="toggleSfx">
+            {{ audio.sfxEnabled.value ? '🔊' : '🔇' }}
+          </button>
+          <button class="btn ghost neonBtn" @click="toggleBgm">
+            {{ audio.bgmEnabled.value ? '🎵' : '🚫🎵' }}
           </button>
         </div>
       </div>
@@ -420,14 +441,7 @@ const previews = computed<Record<string, Preview>>(() => {
               </g>
 
               <g>
-                <circle
-                  v-for="d in previews[p.id].dots"
-                  :key="`pvd-${p.id}-${d.id}`"
-                  :cx="d.x"
-                  :cy="d.y"
-                  r="7.2"
-                  class="pvDot"
-                />
+                <circle v-for="d in previews[p.id].dots" :key="`pvd-${p.id}-${d.id}`" :cx="d.x" :cy="d.y" r="7.2" class="pvDot" />
               </g>
             </svg>
 
@@ -484,9 +498,7 @@ const previews = computed<Record<string, Preview>>(() => {
         </div>
 
         <div class="modalBtns">
-          <button class="btn primary neonBtn" @click="closeHow">
-            <span class="zap">✓</span> Got it
-          </button>
+          <button class="btn primary neonBtn" @click="closeHow"><span class="zap">✓</span> Got it</button>
           <button class="btn ghost neonBtn" @click="closeHow">Close</button>
         </div>
 
