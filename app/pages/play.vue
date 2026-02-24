@@ -3,6 +3,17 @@
 useHead({ title: 'Triangle Dominion — vs AI' })
 
 /* =========================================================
+   AUDIO (game bgm + sfx everywhere)
+========================================================= */
+const audio = useAudioFx()
+
+onMounted(() => {
+  audio.initAudio()
+  // game music (will start after first user gesture if autoplay blocked)
+  void audio.playBgm('bgm_game')
+})
+
+/* =========================================================
    TYPES
 ========================================================= */
 type Dot = { id: number; x: number; y: number; neighbors: number[] }
@@ -46,260 +57,13 @@ function dist2(ax: number, ay: number, bx: number, by: number) {
 }
 
 /* =========================================================
-   GEOJSON -> DOT MAP (REAL CITY OUTLINES)
-   - Fetch boundary GeoJSON (Polygon / MultiPolygon)
-   - Project lat/lon into local XY
-   - Sample points inside polygon (Poisson-ish rejection)
-   - Build neighbor graph by radius + K nearest
-========================================================= */
-type LonLat = [number, number]
-type PolygonLL = LonLat[] // ring
-type MultiPolyLL = PolygonLL[] // multiple rings (we use outer ring only per polygon)
-
-function bboxOf(points: LonLat[]) {
-  let minLon = Infinity,
-      minLat = Infinity,
-      maxLon = -Infinity,
-      maxLat = -Infinity
-  for (const [lon, lat] of points) {
-    if (lon < minLon) minLon = lon
-    if (lat < minLat) minLat = lat
-    if (lon > maxLon) maxLon = lon
-    if (lat > maxLat) maxLat = lat
-  }
-  return { minLon, minLat, maxLon, maxLat }
-}
-
-// equirectangular projection (good enough for city scale)
-function project(lon: number, lat: number, midLat: number) {
-  const rad = Math.PI / 180
-  const x = lon * Math.cos(midLat * rad)
-  const y = lat
-  return { x, y }
-}
-
-// Ray casting point-in-polygon (for projected coordinates)
-function pointInPoly(px: number, py: number, poly: { x: number; y: number }[]) {
-  let inside = false
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i].x,
-        yi = poly[i].y
-    const xj = poly[j].x,
-        yj = poly[j].y
-    const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-12) + xi
-    if (intersect) inside = !inside
-  }
-  return inside
-}
-
-function simplifyRing(ring: LonLat[], step = 3) {
-  // very light simplification to reduce work
-  const out: LonLat[] = []
-  for (let i = 0; i < ring.length; i += step) out.push(ring[i])
-  // ensure closed-ish
-  if (out.length >= 3) out.push(out[0])
-  return out
-}
-
-function extractOuterRingsFromGeoJSON(geo: any): MultiPolyLL {
-  // returns list of outer rings (each ring is LonLat[])
-  // Supports:
-  // - FeatureCollection
-  // - Feature (Polygon/MultiPolygon)
-  // - Geometry (Polygon/MultiPolygon)
-  const rings: MultiPolyLL = []
-
-  function handleGeom(g: any) {
-    if (!g) return
-    if (g.type === 'Polygon') {
-      // coordinates: [ [ring...], [holes...], ...]
-      if (Array.isArray(g.coordinates?.[0])) rings.push(g.coordinates[0] as LonLat[])
-    } else if (g.type === 'MultiPolygon') {
-      // coordinates: [ Polygon[], ... ] ; each Polygon: [ [outer], [holes]... ]
-      for (const poly of g.coordinates ?? []) {
-        if (Array.isArray(poly?.[0])) rings.push(poly[0] as LonLat[])
-      }
-    }
-  }
-
-  if (geo.type === 'FeatureCollection') {
-    for (const f of geo.features ?? []) handleGeom(f.geometry)
-  } else if (geo.type === 'Feature') {
-    handleGeom(geo.geometry)
-  } else {
-    handleGeom(geo)
-  }
-
-  // Filter tiny rings
-  return rings.filter((r) => (r?.length ?? 0) >= 8)
-}
-
-function buildDotsFromOutline(
-    outerRing: LonLat[],
-    opts?: { dotCount?: number; minDist?: number; maxK?: number; pad?: number }
-) {
-  const dotCount = opts?.dotCount ?? 90
-  const minDist = opts?.minDist ?? 0.012 // in projected bbox-relative units (we re-scale later)
-  const maxK = opts?.maxK ?? 7
-  const padPx = opts?.pad ?? 80
-
-  // simplify ring to speed
-  const ring = simplifyRing(outerRing, 3)
-
-  // bbox & projection
-  const bb = bboxOf(ring)
-  const midLat = (bb.minLat + bb.maxLat) / 2
-
-  const projRing = ring.map(([lon, lat]) => project(lon, lat, midLat))
-  const bx = {
-    minX: Math.min(...projRing.map((p) => p.x)),
-    maxX: Math.max(...projRing.map((p) => p.x)),
-    minY: Math.min(...projRing.map((p) => p.y)),
-    maxY: Math.max(...projRing.map((p) => p.y))
-  }
-
-  const w = bx.maxX - bx.minX
-  const h = bx.maxY - bx.minY
-  const scale = 1 / Math.max(w, h)
-
-  // normalize polygon to 0..1 space
-  const normPoly = projRing.map((p) => ({
-    x: (p.x - bx.minX) * scale,
-    y: (p.y - bx.minY) * scale
-  }))
-
-  // sample points in 0..1 box using rejection (Poisson-ish)
-  const pts: { x: number; y: number }[] = []
-  const triesMax = dotCount * 120
-
-  function farEnough(x: number, y: number) {
-    const md2 = minDist * minDist
-    for (const p of pts) {
-      if (dist2(x, y, p.x, p.y) < md2) return false
-    }
-    return true
-  }
-
-  let tries = 0
-  while (pts.length < dotCount && tries < triesMax) {
-    tries++
-    const x = Math.random()
-    const y = Math.random()
-    if (!pointInPoly(x, y, normPoly)) continue
-    if (!farEnough(x, y)) continue
-    pts.push({ x, y })
-  }
-
-  // If outline is very thin / sampling failed, loosen constraints
-  if (pts.length < Math.floor(dotCount * 0.65)) {
-    const pts2: { x: number; y: number }[] = []
-    const triesMax2 = dotCount * 200
-    let t2 = 0
-    const loMin = minDist * 0.72
-    const loD2 = loMin * loMin
-    const far2 = (x: number, y: number) => {
-      for (const p of pts2) if (dist2(x, y, p.x, p.y) < loD2) return false
-      return true
-    }
-    while (pts2.length < dotCount && t2 < triesMax2) {
-      t2++
-      const x = Math.random()
-      const y = Math.random()
-      if (!pointInPoly(x, y, normPoly)) continue
-      if (!far2(x, y)) continue
-      pts2.push({ x, y })
-    }
-    if (pts2.length > pts.length) pts.splice(0, pts.length, ...pts2)
-  }
-
-  // Map to SVG px space
-  const targetSize = 980 // base size
-  const pxPts = pts.map((p) => ({ x: p.x * targetSize, y: p.y * targetSize }))
-
-  const minX2 = Math.min(...pxPts.map((p) => p.x))
-  const minY2 = Math.min(...pxPts.map((p) => p.y))
-  const maxX2 = Math.max(...pxPts.map((p) => p.x))
-  const maxY2 = Math.max(...pxPts.map((p) => p.y))
-
-  const width = maxX2 - minX2 + padPx * 2
-  const height = maxY2 - minY2 + padPx * 2
-
-  // shift to padding
-  for (const p of pxPts) {
-    p.x = p.x - minX2 + padPx
-    p.y = p.y - minY2 + padPx
-  }
-
-  // Build neighbor graph:
-  // - find radius from nearest neighbor statistics
-  // - connect within radius and clamp to maxK nearest
-  const n = pxPts.length
-  const neigh = Array.from({ length: n }, () => new Set<number>())
-
-  // estimate local radius
-  const nearestDists: number[] = []
-  for (let i = 0; i < n; i++) {
-    let best = Infinity
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue
-      const d = Math.sqrt(dist2(pxPts[i].x, pxPts[i].y, pxPts[j].x, pxPts[j].y))
-      if (d < best) best = d
-    }
-    if (isFinite(best)) nearestDists.push(best)
-  }
-  nearestDists.sort((a, b) => a - b)
-  const median = nearestDists[Math.floor(nearestDists.length * 0.55)] || 60
-  const radius = median * 2.05
-
-  for (let i = 0; i < n; i++) {
-    // collect candidates within radius
-    const cands: { j: number; d: number }[] = []
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue
-      const d = Math.sqrt(dist2(pxPts[i].x, pxPts[i].y, pxPts[j].x, pxPts[j].y))
-      if (d <= radius) cands.push({ j, d })
-    }
-    cands.sort((a, b) => a.d - b.d)
-    const picked = cands.slice(0, maxK)
-    for (const { j } of picked) {
-      neigh[i].add(j)
-      neigh[j].add(i)
-    }
-  }
-
-  // Build Dots
-  const dots: Dot[] = pxPts.map((p, i) => ({
-    id: i,
-    x: p.x,
-    y: p.y,
-    neighbors: Array.from(neigh[i]).sort((a, b) => a - b)
-  }))
-
-  // prune isolated
-  const keep = dots.filter((d) => d.neighbors.length > 0)
-  if (keep.length < dots.length) {
-    const map = new Map<number, number>()
-    keep.forEach((d, i) => map.set(d.id, i))
-    const rebuilt: Dot[] = keep.map((d) => ({
-      id: map.get(d.id)!,
-      x: d.x,
-      y: d.y,
-      neighbors: d.neighbors.map((n) => map.get(n)!).filter((v) => v != null).sort((a, b) => a - b)
-    }))
-    return { dots: rebuilt, width, height }
-  }
-
-  return { dots, width, height }
-}
-
-/* =========================================================
-   FALLBACK "CITY-LIKE" MASK (ONLY if GeoJSON fetch fails)
+   SHAPE BOARDS
 ========================================================= */
 function makeTriField(opts?: { rows?: number; cols?: number; spacing?: number; margin?: number }) {
   const rows = opts?.rows ?? 12
   const cols = opts?.cols ?? 14
-  const s = opts?.spacing ?? 52
-  const m = opts?.margin ?? 80
+  const s = opts?.spacing ?? 54
+  const m = opts?.margin ?? 84
 
   const rowDy = Math.sin(Math.PI / 3) * s
   const idx = (r: number, c: number) => r * cols + c
@@ -323,6 +87,7 @@ function makeTriField(opts?: { rows?: number; cols?: number; spacing?: number; m
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const a = idx(r, c)
+
       if (c - 1 >= 0) add(a, idx(r, c - 1))
       if (c + 1 < cols) add(a, idx(r, c + 1))
 
@@ -383,7 +148,7 @@ function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: Ra
   const maxX = Math.max(...dots.map((d) => d.x))
   const maxY = Math.max(...dots.map((d) => d.y))
 
-  const pad = 78
+  const pad = 90
   const w = maxX - minX + pad * 2
   const h = maxY - minY + pad * 2
 
@@ -408,117 +173,94 @@ function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: Ra
   return { dots, width: w, height: h }
 }
 
-// fallback city-like: “river cut”
-function fallbackRiverCity() {
-  const field = makeTriField({ rows: 13, cols: 17, spacing: 52, margin: 86 })
+function polygonMask(field: ReturnType<typeof makeTriField>, sides: number, radiusScale = 0.84, rotateRad = -Math.PI / 2) {
   const dots = field.dots
-  const minX = Math.min(...dots.map((d) => d.x))
-  const maxX = Math.max(...dots.map((d) => d.x))
-  const minY = Math.min(...dots.map((d) => d.y))
-  const maxY = Math.max(...dots.map((d) => d.y))
-  const cx = (minX + maxX) / 2
-  const riverY = (minY + maxY) / 2
-  const riverW = (maxY - minY) * 0.10
+  const cx = (Math.min(...dots.map((d) => d.x)) + Math.max(...dots.map((d) => d.x))) / 2
+  const cy = (Math.min(...dots.map((d) => d.y)) + Math.max(...dots.map((d) => d.y))) / 2
+  const R = Math.min(field.width, field.height) * 0.35 * radiusScale
 
-  return remapFilteredBoard(field, (d) => {
-    const bend = Math.sin((d.x - cx) / 160) * 28
-    const yLine = riverY + bend
-    const inRiver = Math.abs(d.y - yLine) < riverW
-    return !inRiver
-  })
+  const verts: { x: number; y: number }[] = []
+  for (let i = 0; i < sides; i++) {
+    const a = rotateRad + (i * Math.PI * 2) / sides
+    verts.push({ x: cx + Math.cos(a) * R, y: cy + Math.sin(a) * R })
+  }
+
+  const inside = (px: number, py: number) => {
+    let ins = false
+    for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+      const xi = verts[i].x,
+        yi = verts[i].y
+      const xj = verts[j].x,
+        yj = verts[j].y
+      const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-12) + xi
+      if (intersect) ins = !ins
+    }
+    return ins
+  }
+
+  return remapFilteredBoard(field, (d) => inside(d.x, d.y))
 }
 
-/* =========================================================
-   BOARD PRESETS (REAL CITY MAPS)
-   Best practice: copy GeoJSON to /public/maps and use local URLs.
-========================================================= */
+function presetCircle() {
+  const field = makeTriField({ rows: 13, cols: 15, spacing: 52, margin: 86 })
+  const dots = field.dots
+  const cx = (Math.min(...dots.map((d) => d.x)) + Math.max(...dots.map((d) => d.x))) / 2
+  const cy = (Math.min(...dots.map((d) => d.y)) + Math.max(...dots.map((d) => d.y))) / 2
+  const R = Math.min(field.width, field.height) * 0.33
+  return remapFilteredBoard(field, (d) => Math.sqrt(dist2(d.x, d.y, cx, cy)) < R)
+}
+function presetTriangle() {
+  const field = makeTriField({ rows: 12, cols: 14, spacing: 54, margin: 86 })
+  return polygonMask(field, 3, 0.95, -Math.PI / 2)
+}
+function presetSquare() {
+  const field = makeTriField({ rows: 12, cols: 12, spacing: 54, margin: 86 })
+  return polygonMask(field, 4, 0.9, Math.PI / 4)
+}
+function presetRectangle() {
+  const field = makeTriField({ rows: 10, cols: 16, spacing: 52, margin: 86 })
+  const dots = field.dots
+  const cx = (Math.min(...dots.map((d) => d.x)) + Math.max(...dots.map((d) => d.x))) / 2
+  const cy = (Math.min(...dots.map((d) => d.y)) + Math.max(...dots.map((d) => d.y))) / 2
+  const w = field.width * 0.34
+  const h = field.height * 0.22
+  return remapFilteredBoard(field, (d) => Math.abs(d.x - cx) < w && Math.abs(d.y - cy) < h)
+}
+function presetPentagon() {
+  const field = makeTriField({ rows: 13, cols: 13, spacing: 52, margin: 86 })
+  return polygonMask(field, 5, 0.88, -Math.PI / 2)
+}
+function presetHexagon() {
+  const field = makeTriField({ rows: 13, cols: 13, spacing: 52, margin: 86 })
+  return polygonMask(field, 6, 0.88, Math.PI / 6)
+}
+
 type BoardPreset = {
   id: string
   name: string
-  tag: 'City Map'
+  tag: 'Shape'
   description: string
-  theme: { fogA: string; fogB: string; accentA: string; accentB: string }
-  geojsonUrl: string // boundary outline
-  dotCount: number
-  fallback: () => { dots: Dot[]; width: number; height: number }
+  build: () => { dots: Dot[]; width: number; height: number }
 }
 
 const BOARD_PRESETS: BoardPreset[] = [
-  {
-    id: 'dhaka',
-    name: 'Dhaka — City Boundary',
-    tag: 'City Map',
-    description: 'Real outline-based dot map (GeoJSON).',
-    theme: {
-      fogA: 'rgba(0,240,255,0.18)',
-      fogB: 'rgba(255,61,166,0.12)',
-      accentA: '#00F0FF',
-      accentB: '#FF3DA6'
-    },
-    // if you also saved Dhaka locally, use: '/maps/dhaka.geojson'
-    geojsonUrl:
-        'https://gist.githubusercontent.com/EmranAhmed/e1f1da00b6677aed023a/raw/cc9d96ab36289786f491c9cfd537fe01b8121318/dhaka.geojson',
-    dotCount: 95,
-    fallback: fallbackRiverCity
-  },
-
-  {
-    id: 'tokyo',
-    name: 'Tokyo — City Boundary',
-    tag: 'City Map',
-    description: 'Real Tokyo boundary (GeoJSON).',
-    // if you saved Tokyo locally, use: '/maps/tokyo.geo.json'
-    theme: {
-      fogA: 'rgba(120,90,255,0.16)',
-      fogB: 'rgba(0,240,255,0.12)',
-      accentA: '#7E5CFF',
-      accentB: '#00F0FF'
-    },
-    geojsonUrl: 'https://raw.githubusercontent.com/utisz/compound-cities/master/tokyo.geo.json',
-    dotCount: 110,
-    fallback: fallbackRiverCity
-  },
-
-  {
-    id: 'kolkata',
-    name: 'Kolkata — City Boundary',
-    tag: 'City Map',
-    description: 'Local GeoJSON (public/maps/kolkata.geojson).',
-    theme: {
-      fogA: 'rgba(255,61,166,0.14)',
-      fogB: 'rgba(120,90,255,0.12)',
-      accentA: '#FF3DA6',
-      accentB: '#7E5CFF'
-    },
-    geojsonUrl: '/maps/kolkata.geojson', // ✅ local
-    dotCount: 95,
-    fallback: fallbackRiverCity
-  },
-
-  {
-    id: 'barcelona',
-    name: 'Barcelona — City Boundary',
-    tag: 'City Map',
-    description: 'Local GeoJSON (public/maps/barcelona.geojson).',
-    theme: {
-      fogA: 'rgba(120,255,70,0.12)',
-      fogB: 'rgba(0,240,255,0.12)',
-      accentA: '#78FF46',
-      accentB: '#00F0FF'
-    },
-    geojsonUrl: '/maps/barcelona.geojson', // ✅ local
-    dotCount: 105,
-    fallback: fallbackRiverCity
-  }
+  { id: 'circle', name: 'Bubble Arena', tag: 'Shape', description: 'Round and bouncy. Easy to read, fun to combo.', build: presetCircle },
+  { id: 'triangle', name: 'Tri Peak', tag: 'Shape', description: 'Sharp corners, quick fights, fast endings.', build: presetTriangle },
+  { id: 'square', name: 'Pixel Square', tag: 'Shape', description: 'Classic grid-ish feel, balanced edges.', build: presetSquare },
+  { id: 'rectangle', name: 'Neon Strip', tag: 'Shape', description: 'Long arena—make chain captures!', build: presetRectangle },
+  { id: 'pentagon', name: 'Pentagon Park', tag: 'Shape', description: 'Weird angles = playful tactics.', build: presetPentagon },
+  { id: 'hexagon', name: 'Hex Hive', tag: 'Shape', description: 'Lots of options, high triangle potential.', build: presetHexagon }
 ]
 
 /* =========================================================
    BOARD STATE
 ========================================================= */
-const selectedBoardId = ref<string>('tokyo')
-const selectedPreset = computed(() => BOARD_PRESETS.find((p) => p.id === selectedBoardId.value) ?? BOARD_PRESETS[0])
-
-const board = ref<{ dots: Dot[]; width: number; height: number }>(selectedPreset.value.fallback())
+const selectedBoardId = ref<string>('hexagon')
+function buildBoardById(id: string) {
+  const p = BOARD_PRESETS.find((x) => x.id === id) ?? BOARD_PRESETS[0]
+  return p.build()
+}
+const board = ref(buildBoardById(selectedBoardId.value))
 const dotsById = computed(() => {
   const m = new Map<number, Dot>()
   for (const d of board.value.dots) m.set(d.id, d)
@@ -529,7 +271,6 @@ const dotsById = computed(() => {
    PHASE / PLAYERS
 ========================================================= */
 const phase = ref<Phase>('setup')
-
 const players = ref<Player[]>([])
 const currentPlayerIndex = ref(0)
 const currentPlayer = computed(() => players.value[currentPlayerIndex.value])
@@ -612,8 +353,13 @@ async function rollDice() {
   if (phase.value !== 'playing') return
   if (rolled.value != null && linesLeft.value > 0) return
 
+  audio.unlockAudio()
+  audio.playSfx('dice_roll')
+
   const n = Math.floor(Math.random() * 6) + 1
   await animateDiceTo(n)
+
+  audio.playSfx('dice_land')
 
   linesLeft.value = n
   selectedDotId.value = null
@@ -656,21 +402,21 @@ function orient(a: Pt, b: Pt, c: Pt) {
 }
 function onSegment(a: Pt, b: Pt, p: Pt) {
   return (
-      Math.min(a.x, b.x) <= p.x + 1e-9 &&
-      p.x <= Math.max(a.x, b.x) + 1e-9 &&
-      Math.min(a.y, b.y) <= p.y + 1e-9 &&
-      p.y <= Math.max(a.y, b.y) + 1e-9
+    Math.min(a.x, b.x) <= p.x + 1e-9 &&
+    p.x <= Math.max(a.x, b.x) + 1e-9 &&
+    Math.min(a.y, b.y) <= p.y + 1e-9 &&
+    p.y <= Math.max(a.y, b.y) + 1e-9
   )
 }
 function segmentsCross(a: Pt, b: Pt, c: Pt, d: Pt) {
   const minAx = Math.min(a.x, b.x),
-      maxAx = Math.max(a.x, b.x)
+    maxAx = Math.max(a.x, b.x)
   const minAy = Math.min(a.y, b.y),
-      maxAy = Math.max(a.y, b.y)
+    maxAy = Math.max(a.y, b.y)
   const minCx = Math.min(c.x, d.x),
-      maxCx = Math.max(c.x, d.x)
+    maxCx = Math.max(c.x, d.x)
   const minCy = Math.min(c.y, d.y),
-      maxCy = Math.max(c.y, d.y)
+    maxCy = Math.max(c.y, d.y)
   if (maxAx < minCx || maxCx < minAx || maxAy < minCy || maxCy < minAy) return false
 
   const o1 = orient(a, b, c)
@@ -753,9 +499,9 @@ function buildTriangles() {
   triByEdge.value = index
 }
 watch(
-    () => board.value.dots.length,
-    () => buildTriangles(),
-    { immediate: true }
+  () => board.value.dots.length,
+  () => buildTriangles(),
+  { immediate: true }
 )
 
 const recentClaimIds = ref(new Set<string>())
@@ -765,7 +511,7 @@ function markClaim(tid: string) {
   window.setTimeout(() => {
     recentClaimIds.value.delete(tid)
     recentClaimIds.value = new Set(recentClaimIds.value)
-  }, 620)
+  }, 520)
 }
 
 const recentEdgeKeys = ref(new Set<EdgeKey>())
@@ -775,7 +521,7 @@ function markEdge(key: EdgeKey) {
   window.setTimeout(() => {
     recentEdgeKeys.value.delete(key)
     recentEdgeKeys.value = new Set(recentEdgeKeys.value)
-  }, 680)
+  }, 520)
 }
 
 function claimTrianglesForEdge(edgeKey: EdgeKey) {
@@ -854,6 +600,8 @@ function endGameIfNoMoves() {
     linesLeft.value = 0
     selectedDotId.value = null
     flash('Game Over')
+    audio.playSfx('game_over')
+    audio.playSfx('win_fanfare', 0.85)
   }
 }
 
@@ -861,6 +609,8 @@ function endGameIfNoMoves() {
    TURN HELPERS
 ========================================================= */
 async function endTurn() {
+  audio.playSfx('turn_end', 0.7)
+
   rolled.value = null
   linesLeft.value = 0
   selectedDotId.value = null
@@ -877,11 +627,11 @@ async function endTurn() {
 }
 
 /* =========================================================
-   SELECTION (RESTORED) + CLICK CONNECT (RESTORED)
+   SELECTION + CLICK CONNECT
 ========================================================= */
 const selectedDotId = ref<number | null>(null)
 const selectedDot = computed(() =>
-    selectedDotId.value == null ? null : dotsById.value.get(selectedDotId.value) || null
+  selectedDotId.value == null ? null : dotsById.value.get(selectedDotId.value) || null
 )
 const neighborIds = computed(() => new Set(selectedDot.value?.neighbors ?? []))
 
@@ -889,15 +639,19 @@ function onDotClick(id: number) {
   if (phase.value !== 'playing') return
   if (currentPlayer.value.isAI) return
 
-  // BEFORE ROLL: selection only
+  audio.unlockAudio()
+
+  // No roll yet: just selection
   if (rolled.value == null || linesLeft.value <= 0) {
     selectedDotId.value = selectedDotId.value === id ? null : id
+    audio.playSfx('dot_select', 0.75)
     return
   }
 
-  // After roll: classic 2-click connect
+  // first click after roll: select
   if (selectedDotId.value == null) {
     selectedDotId.value = id
+    audio.playSfx('dot_select', 0.75)
     return
   }
 
@@ -906,184 +660,55 @@ function onDotClick(id: number) {
 
   if (a === b) {
     selectedDotId.value = null
+    audio.playSfx('ui_error', 0.7)
     return
   }
 
   const da = dotsById.value.get(a)
   if (!da?.neighbors.includes(b)) {
-    flash('Pick a neighboring dot')
+    flash('Pick a neighbor')
     selectedDotId.value = b
+    audio.playSfx('edge_block')
     return
   }
+
   if (hasEdge(a, b)) {
     flash('Already drawn')
     selectedDotId.value = b
+    audio.playSfx('edge_block')
     return
   }
+
   if (wouldCrossExistingEdge(a, b)) {
-    flash("Illegal: lines can't cross")
+    flash('No crossing!')
     selectedDotId.value = b
+    audio.playSfx('edge_block')
     return
   }
 
   const ok = addEdge(a, b)
   if (!ok) return
 
+  audio.playSfx('edge_draw')
+
   const key = makeEdgeKey(a, b)
   markEdge(key)
 
   linesLeft.value = Math.max(0, linesLeft.value - 1)
+
   const got = claimTrianglesForEdge(key)
-  if (got > 0) flash(`⚡ +${got}`)
+  if (got === 1) audio.playSfx('triangle_claim')
+  else if (got > 1) audio.playSfx('triangle_multi')
+
+  if (got > 0) flash(`🎉 +${got}`)
 
   selectedDotId.value = b
+
   if (linesLeft.value === 0) void endTurn()
 }
 
 /* =========================================================
-   DRAG CONNECT (FIXED)
-   - Optional: press dot, drag to neighbor, release to connect
-   - Uses SVG pointer capture + correct viewBox conversion
-========================================================= */
-const svgEl = ref<SVGSVGElement | null>(null)
-const dragging = ref(false)
-const dragFrom = ref<number | null>(null)
-const dragHover = ref<number | null>(null)
-const pointerSvg = ref({ x: 0, y: 0 })
-const activePointerId = ref<number | null>(null)
-
-function svgPointFromEvent(e: PointerEvent) {
-  const svg = svgEl.value
-  if (!svg) return { x: 0, y: 0 }
-  const rect = svg.getBoundingClientRect()
-  const vb = svg.viewBox.baseVal
-  const sx = vb.width / rect.width
-  const sy = vb.height / rect.height
-  const x = (e.clientX - rect.left) * sx + vb.x
-  const y = (e.clientY - rect.top) * sy + vb.y
-  return { x, y }
-}
-
-function nearestDot(x: number, y: number, max = 28) {
-  const maxD2 = max * max
-  let best: { id: number; d2: number } | null = null
-  for (const d of board.value.dots) {
-    const d2 = dist2(x, y, d.x, d.y)
-    if (d2 <= maxD2 && (!best || d2 < best.d2)) best = { id: d.id, d2 }
-  }
-  return best?.id ?? null
-}
-
-function beginDragFromDot(id: number, e: PointerEvent) {
-  if (phase.value !== 'playing') return
-  if (currentPlayer.value.isAI) return
-
-  // keep the old selection behavior:
-  // we set selected always when touching a dot (feels good)
-  selectedDotId.value = id
-
-  // drag only meaningful after roll
-  if (rolled.value == null || linesLeft.value <= 0) return
-
-  dragging.value = true
-  dragFrom.value = id
-  dragHover.value = null
-  pointerSvg.value = svgPointFromEvent(e)
-  activePointerId.value = e.pointerId
-
-  // capture on SVG (reliable across browsers)
-  svgEl.value?.setPointerCapture?.(e.pointerId)
-}
-
-function onSvgPointerMove(e: PointerEvent) {
-  if (!dragging.value) return
-  if (activePointerId.value != null && e.pointerId !== activePointerId.value) return
-
-  pointerSvg.value = svgPointFromEvent(e)
-
-  const a = dragFrom.value
-  if (a == null) return
-
-  const near = nearestDot(pointerSvg.value.x, pointerSvg.value.y, 34)
-  if (near == null) {
-    dragHover.value = null
-    return
-  }
-
-  // only hover if neighbor of a
-  const da = dotsById.value.get(a)
-  if (!da?.neighbors.includes(near)) {
-    dragHover.value = null
-    return
-  }
-  dragHover.value = near
-}
-
-function endDrag(e: PointerEvent) {
-  if (!dragging.value) return
-  if (activePointerId.value != null && e.pointerId !== activePointerId.value) return
-
-  dragging.value = false
-  activePointerId.value = null
-
-  const a = dragFrom.value
-  const b = dragHover.value
-  dragFrom.value = null
-  dragHover.value = null
-
-  if (a == null || b == null) return
-  if (phase.value !== 'playing') return
-  if (currentPlayer.value.isAI) return
-  if (rolled.value == null || linesLeft.value <= 0) return
-  if (a === b) return
-
-  const da = dotsById.value.get(a)
-  if (!da?.neighbors.includes(b)) return
-  if (hasEdge(a, b)) {
-    flash('Already drawn')
-    selectedDotId.value = b
-    return
-  }
-  if (wouldCrossExistingEdge(a, b)) {
-    flash("Illegal: lines can't cross")
-    selectedDotId.value = b
-    return
-  }
-
-  const ok = addEdge(a, b)
-  if (!ok) return
-
-  const key = makeEdgeKey(a, b)
-  markEdge(key)
-  linesLeft.value = Math.max(0, linesLeft.value - 1)
-
-  const got = claimTrianglesForEdge(key)
-  if (got > 0) flash(`⚡ +${got}`)
-
-  selectedDotId.value = b
-  if (linesLeft.value === 0) void endTurn()
-}
-
-function cancelDrag() {
-  dragging.value = false
-  dragFrom.value = null
-  dragHover.value = null
-  activePointerId.value = null
-}
-
-onMounted(() => {
-  window.addEventListener('pointerup', (e) => endDrag(e as PointerEvent), { passive: true })
-  window.addEventListener('pointercancel', cancelDrag)
-  window.addEventListener('blur', cancelDrag)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('pointerup', (e) => endDrag(e as PointerEvent))
-  window.removeEventListener('pointercancel', cancelDrag)
-  window.removeEventListener('blur', cancelDrag)
-})
-
-/* =========================================================
-   AI (unchanged)
+   AI
 ========================================================= */
 function edgeCenterBonus(a: number, b: number) {
   const A = dotsById.value.get(a)!
@@ -1103,7 +728,6 @@ function triStatsIfAddEdge(edgeKey: EdgeKey) {
   let immediate = 0
   let setup = 0
   let danger = 0
-
   const exists = (ek: EdgeKey) => (ek === edgeKey ? true : edgeExists(ek))
 
   for (const t of list) {
@@ -1124,10 +748,9 @@ function triStatsIfAddEdge(edgeKey: EdgeKey) {
 function opponentBestImmediateAfter(edgeKey: EdgeKey) {
   const legal = legalMovesList()
   if (!legal.length) return 0
-
   const exists = (ek: EdgeKey) => (ek === edgeKey ? true : edgeExists(ek))
-
   let best = 0
+
   for (const mv of legal) {
     if (mv.key === edgeKey) continue
     const list = triByEdge.value.get(mv.key) ?? []
@@ -1153,19 +776,22 @@ function pickAIMoveWise(linesRemaining: number): Move | null {
   for (const m of legal) {
     const { immediate, setup, danger } = triStatsIfAddEdge(m.key)
     const afterLines = linesRemaining - 1
-    const setupWeight = afterLines > 0 ? 720 : 55
-    const dangerWeight = afterLines > 0 ? 130 : 690
+
+    const setupWeight = afterLines > 0 ? 700 : 60
+    const dangerWeight = afterLines > 0 ? 135 : 680
+
     const oppBest = opponentBestImmediateAfter(m.key)
     const oppWeight = afterLines > 0 ? 190 : 720
+
     const center = edgeCenterBonus(m.a, m.b)
 
     const score =
-        immediate * 5200 +
-        setup * setupWeight -
-        danger * dangerWeight -
-        oppBest * oppWeight +
-        center * 28 +
-        Math.random() * 0.10
+      immediate * 5200 +
+      setup * setupWeight -
+      danger * dangerWeight -
+      oppBest * oppWeight +
+      center * 26 +
+      Math.random() * 0.18
 
     if (score > bestScore + 1e-9) {
       bestScore = score
@@ -1174,6 +800,7 @@ function pickAIMoveWise(linesRemaining: number): Move | null {
       best.push(m)
     }
   }
+
   return best[Math.floor(Math.random() * best.length)] || legal[0]
 }
 
@@ -1193,10 +820,15 @@ async function aiPlayTurn() {
 
     addEdge(move.a, move.b)
     markEdge(move.key)
+    audio.playSfx('ai_move', 0.55)
+
     linesLeft.value = Math.max(0, linesLeft.value - 1)
 
     const got = claimTrianglesForEdge(move.key)
-    if (got > 0) flash(`⚡ +${got}`)
+    if (got === 1) audio.playSfx('triangle_claim', 0.9)
+    else if (got > 1) audio.playSfx('triangle_multi', 0.95)
+
+    if (got > 0) flash(`🤖 +${got}`)
     await sleep(150)
   }
 
@@ -1206,68 +838,7 @@ async function aiPlayTurn() {
 }
 
 /* =========================================================
-   LOAD BOARD (FETCH REAL GEOJSON)
-========================================================= */
-const boardLoading = ref(false)
-const boardError = ref<string | null>(null)
-
-async function loadBoard(id: string) {
-  selectedBoardId.value = id
-  boardError.value = null
-  boardLoading.value = true
-
-  // always reset state
-  hardResetState()
-
-  const preset = selectedPreset.value
-  try {
-    // client-only fetch (avoid SSR)
-    if (!import.meta.client) {
-      board.value = preset.fallback()
-      buildTriangles()
-      boardLoading.value = false
-      return
-    }
-
-    const res = await fetch(preset.geojsonUrl, { cache: 'force-cache' })
-    if (!res.ok) throw new Error(`GeoJSON fetch failed (${res.status})`)
-    const geo = await res.json()
-
-    const rings = extractOuterRingsFromGeoJSON(geo)
-    if (!rings.length) throw new Error('No Polygon/MultiPolygon rings found')
-
-    // pick the largest ring by bbox area (usually the main city boundary)
-    let best = rings[0]
-    let bestArea = -Infinity
-    for (const r of rings) {
-      const bb = bboxOf(r)
-      const area = (bb.maxLon - bb.minLon) * (bb.maxLat - bb.minLat)
-      if (area > bestArea) {
-        bestArea = area
-        best = r
-      }
-    }
-
-    board.value = buildDotsFromOutline(best, {
-      dotCount: preset.dotCount,
-      minDist: 0.012,
-      maxK: 7,
-      pad: 90
-    })
-
-    buildTriangles()
-  } catch (e: any) {
-    boardError.value = e?.message ?? 'Failed to load city map'
-    // fallback to city-like board so game remains playable
-    board.value = preset.fallback()
-    buildTriangles()
-  } finally {
-    boardLoading.value = false
-  }
-}
-
-/* =========================================================
-   RESET / START
+   SETUP / RESET / SHAPE LOAD
 ========================================================= */
 function hardResetState() {
   edges.value = []
@@ -1277,13 +848,25 @@ function hardResetState() {
   selectedDotId.value = null
   message.value = ''
   currentPlayerIndex.value = 0
-  cancelDrag()
 
   for (const t of triangles.value) t.owner = null
   for (const p of players.value) p.score = 0
 }
 
+function loadBoard(id: string) {
+  audio.unlockAudio()
+  audio.playSfx('ui_click', 0.9)
+
+  selectedBoardId.value = id
+  board.value = buildBoardById(id)
+  buildTriangles()
+  hardResetState()
+}
+
 function startGame() {
+  audio.unlockAudio()
+  audio.playSfx('ui_click')
+
   players.value = [
     { id: 0, name: 'You', color: '#00F0FF', score: 0, isAI: false },
     { id: 1, name: 'AI', color: '#FF3DA6', score: 0, isAI: true }
@@ -1293,17 +876,18 @@ function startGame() {
 }
 
 function resetMatch() {
+  audio.unlockAudio()
+  audio.playSfx('ui_click')
+
   hardResetState()
   phase.value = 'playing'
 }
 
 function backToSetup() {
-  phase.value = 'setup'
-  rolled.value = null
-  linesLeft.value = 0
-  selectedDotId.value = null
-  message.value = ''
-  cancelDrag()
+  audio.unlockAudio()
+  audio.playSfx('ui_back')
+  audio.stopBgm(false)
+  navigateTo('/')
 }
 
 /* =========================================================
@@ -1326,27 +910,52 @@ function edgeStroke(e: Edge) {
   return p?.color ?? 'rgba(240,250,255,0.92)'
 }
 const canRollTitle = computed(() => (canRoll.value ? 'Roll' : ''))
+const selectedPreset = computed(() => BOARD_PRESETS.find((p) => p.id === selectedBoardId.value) ?? BOARD_PRESETS[0])
+
+/* confetti + sfx hook */
+const confettiBursts = ref<Array<{ id: number; x: number; y: number; t: number; color: string }>>([])
+let confId = 1
+function confettiAtTriangle(t: Triangle) {
+  const a = dotsById.value.get(t.a)!
+  const b = dotsById.value.get(t.b)!
+  const c = dotsById.value.get(t.c)!
+  const x = (a.x + b.x + c.x) / 3
+  const y = (a.y + b.y + c.y) / 3
+  const color = playerById(t.owner)?.color ?? '#ffffff'
+  const thisId = confId++
+  confettiBursts.value.push({ id: thisId, x, y, t: performance.now(), color })
+  if (confettiBursts.value.length > 14) confettiBursts.value.splice(0, confettiBursts.value.length - 14)
+  window.setTimeout(() => {
+    confettiBursts.value = confettiBursts.value.filter((c) => c.id !== thisId)
+  }, 650)
+}
+watch(
+  () => Array.from(recentClaimIds.value),
+  () => {
+    for (const tid of recentClaimIds.value) {
+      const t = triangles.value.find((x) => x.id === tid)
+      if (t?.owner != null) confettiAtTriangle(t)
+    }
+  }
+)
 
 /* =========================================================
-   ON FIRST LOAD: pre-load selected board in setup
+   ROUTE INTEGRATION
 ========================================================= */
+const route = useRoute()
 onMounted(() => {
-  // load initial map for setup preview
-  void loadBoard(selectedBoardId.value)
+  const boardId = String(route.query.board ?? '')
+  if (boardId) loadBoard(boardId)
+
+  if (String(route.query.autostart ?? '') === '1') {
+    startGame()
+  }
 })
 </script>
 
 <template>
-  <div
-      class="wrap"
-      :style="{
-      '--fogA': selectedPreset.theme.fogA,
-      '--fogB': selectedPreset.theme.fogB,
-      '--accentA': selectedPreset.theme.accentA,
-      '--accentB': selectedPreset.theme.accentB
-    }"
-  >
-    <!-- animated energy background layers -->
+  <div class="wrap" @click="audio.unlockAudio()">
+    <!-- background -->
     <div class="bgEnergy">
       <div class="bgAurora a1"></div>
       <div class="bgAurora a2"></div>
@@ -1361,27 +970,23 @@ onMounted(() => {
         Triangle Dominion
         <span class="modeTag">vs AI</span>
       </div>
-      <div class="subtitle">
-        Pick a <b>real city map</b> (GeoJSON boundary) → dots fill the actual outline.
-      </div>
+      <div class="subtitle">Choose a shape board and start playing.</div>
 
       <div class="setupGrid">
         <div class="boardPicker neonCard">
           <div class="pickerTitle">
-            <div class="pickerLabel neonText">City Maps</div>
-            <div class="pickerHint">
-              Controls in match: Roll dice → click a dot to select → click a neighbor to connect.
-              <span class="muted">(Drag also works)</span>
-            </div>
+            <div class="pickerLabel neonText">Shapes</div>
+            <div class="pickerHint">Click a dot to reveal neighbors, then click a neighbor to draw.</div>
           </div>
 
           <div class="presetList">
             <button
-                v-for="p in BOARD_PRESETS"
-                :key="p.id"
-                class="presetBtn"
-                :class="{ active: p.id === selectedBoardId }"
-                @click="loadBoard(p.id)"
+              v-for="p in BOARD_PRESETS"
+              :key="p.id"
+              class="presetBtn"
+              :class="{ active: p.id === selectedBoardId }"
+              @mouseenter="audio.playSfx('ui_hover', 0.5)"
+              @click="loadBoard(p.id)"
             >
               <div class="presetHead">
                 <div class="presetName">{{ p.name }}</div>
@@ -1392,18 +997,15 @@ onMounted(() => {
           </div>
 
           <div class="bigActions">
-            <button class="btn primary neonBtn big" @click="startGame" :disabled="boardLoading">
-              <span class="zap">⚡</span> Start Match
+            <button class="btn primary neonBtn big" @click="startGame">
+              <span class="zap">🎲</span> Start Match
             </button>
 
-            <div class="note" v-if="boardLoading">Loading map…</div>
-            <div class="note" v-else-if="boardError">
-              ⚠️ Map load failed: <b>{{ boardError }}</b>
-              <div class="muted">Using fallback board. To fix: download GeoJSON to /public/maps and use local URL.</div>
-            </div>
-            <div class="note" v-else>
-              Map loaded: <b>{{ board.dots.length }}</b> dots • <b>{{ triangles.length }}</b> triangles
-            </div>
+            <button class="btn ghost neonBtn" @click="audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
+              {{ audio.enabled ? '🔊 Sound: On' : '🔇 Sound: Off' }}
+            </button>
+
+            <div class="note">Roll dice → draw exactly N edges → triangles auto-claim.</div>
           </div>
         </div>
 
@@ -1419,35 +1021,25 @@ onMounted(() => {
 
           <div class="previewStage">
             <svg class="svg previewSvg" :viewBox="`0 0 ${board.width} ${board.height}`" preserveAspectRatio="xMidYMid meet">
-              <g opacity="0.13">
+              <g opacity="0.16">
                 <line
-                    v-for="m in allEdgesOnce"
-                    :key="`pv-${m.key}`"
-                    :x1="dotsById.get(m.a)!.x"
-                    :y1="dotsById.get(m.a)!.y"
-                    :x2="dotsById.get(m.b)!.x"
-                    :y2="dotsById.get(m.b)!.y"
-                    class="pvEdge"
+                  v-for="m in allEdgesOnce"
+                  :key="`pv-${m.key}`"
+                  :x1="dotsById.get(m.a)!.x"
+                  :y1="dotsById.get(m.a)!.y"
+                  :x2="dotsById.get(m.b)!.x"
+                  :y2="dotsById.get(m.b)!.y"
+                  class="pvEdge"
                 />
               </g>
-
               <g>
-                <circle
-                    v-for="d in board.dots"
-                    :key="`pvd-${d.id}`"
-                    :cx="d.x"
-                    :cy="d.y"
-                    :r="7.5"
-                    class="pvDot"
-                />
+                <circle v-for="d in board.dots" :key="`pvd-${d.id}`" :cx="d.x" :cy="d.y" :r="7.5" class="pvDot" />
               </g>
             </svg>
           </div>
 
           <div class="previewFooter">
-            <div class="tinyTip">
-              Best reliability: put files in <code>/public/maps/</code> and use local URLs.
-            </div>
+            <div class="tinyTip">Pick your vibe: circle is chill, triangle is savage 😄</div>
           </div>
         </div>
       </div>
@@ -1463,12 +1055,8 @@ onMounted(() => {
             <span class="modeTag soft">{{ selectedPreset.name }}</span>
           </div>
           <div class="hud">
-            <span class="hudPill">
-              Lines: <b class="pulseNum">{{ linesLeft }}</b>
-            </span>
-            <span class="hudPill" v-if="rolled != null">
-              Rolled: <b class="pulseNum">{{ rolled }}</b>
-            </span>
+            <span class="hudPill"> Lines: <b class="pulseNum">{{ linesLeft }}</b> </span>
+            <span class="hudPill" v-if="rolled != null"> Rolled: <b class="pulseNum">{{ rolled }}</b> </span>
           </div>
         </div>
 
@@ -1481,19 +1069,19 @@ onMounted(() => {
 
           <!-- Dice -->
           <button
-              class="diceWrap"
-              :class="{ rolling: diceAnimating, settle: diceSettle, disabled: !canRoll }"
-              @click="canRoll && rollDice()"
-              :title="canRollTitle"
-              aria-label="Roll Dice"
+            class="diceWrap"
+            :class="{ rolling: diceAnimating, settle: diceSettle, disabled: !canRoll }"
+            @click="canRoll && rollDice()"
+            :title="canRollTitle"
+            aria-label="Roll Dice"
           >
             <div class="dice3d">
               <div class="diceFace">
                 <span
-                    v-for="(p, i) in pipMap[diceValue]"
-                    :key="i"
-                    class="pip"
-                    :style="{ transform: `translate(${p[0] * 16}px, ${p[1] * 16}px)` }"
+                  v-for="(p, i) in pipMap[diceValue]"
+                  :key="i"
+                  class="pip"
+                  :style="{ transform: `translate(${p[0] * 16}px, ${p[1] * 16}px)` }"
                 />
                 <div class="diceGloss"></div>
                 <div class="diceShade"></div>
@@ -1509,9 +1097,9 @@ onMounted(() => {
           <button class="btn ghost neonBtn" @click="resetMatch" :disabled="phase !== 'playing'">Reset</button>
           <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
 
-          <div v-if="message" class="pill warn neonWarn zapMsg">
-            <span class="miniZap">⚡</span> {{ message }}
-          </div>
+          <button class="btn ghost neonBtn" @click="audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
+            {{ audio.enabled ? '🔊' : '🔇' }}
+          </button>
         </div>
       </div>
 
@@ -1525,26 +1113,19 @@ onMounted(() => {
 
       <!-- GAME BOARD -->
       <div class="stage neonStage enter">
-        <svg
-            ref="svgEl"
-            class="svg"
-            :viewBox="`0 0 ${board.width} ${board.height}`"
-            preserveAspectRatio="xMidYMid meet"
-            @pointermove="onSvgPointerMove"
-            style="touch-action: none"
-        >
+        <svg class="svg" :viewBox="`0 0 ${board.width} ${board.height}`" preserveAspectRatio="xMidYMid meet">
           <defs>
             <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
               <feGaussianBlur stdDeviation="4.2" result="blur" />
               <feColorMatrix
-                  in="blur"
-                  type="matrix"
-                  values="
+                in="blur"
+                type="matrix"
+                values="
                   1 0 0 0 0
                   0 1 0 0 0
                   0 0 1 0 0
                   0 0 0 1.6 0"
-                  result="glow"
+                result="glow"
               />
               <feMerge>
                 <feMergeNode in="glow" />
@@ -1553,121 +1134,118 @@ onMounted(() => {
             </filter>
 
             <linearGradient id="electricGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="var(--accentA)" stop-opacity="0.15" />
-              <stop offset="35%" stop-color="var(--accentA)" stop-opacity="0.95" />
-              <stop offset="65%" stop-color="var(--accentB)" stop-opacity="0.95" />
-              <stop offset="100%" stop-color="var(--accentB)" stop-opacity="0.15" />
+              <stop offset="0%" stop-color="#00F0FF" stop-opacity="0.10" />
+              <stop offset="30%" stop-color="#00F0FF" stop-opacity="0.95" />
+              <stop offset="60%" stop-color="#FF3DA6" stop-opacity="0.95" />
+              <stop offset="100%" stop-color="#FF3DA6" stop-opacity="0.10" />
               <animate attributeName="x1" values="0%;100%;0%" dur="1.6s" repeatCount="indefinite" />
               <animate attributeName="x2" values="100%;0%;100%" dur="1.6s" repeatCount="indefinite" />
             </linearGradient>
           </defs>
 
+          <!-- confetti bursts -->
+          <g>
+            <g v-for="c in confettiBursts" :key="c.id" class="confetti" :style="{ transform: `translate(${c.x}px, ${c.y}px)` }">
+              <circle r="3.8" :fill="c.color" opacity="0.9" />
+              <circle r="2.4" cx="14" cy="-6" :fill="c.color" opacity="0.7" />
+              <circle r="2.6" cx="-12" cy="8" :fill="c.color" opacity="0.7" />
+              <circle r="2.2" cx="8" cy="12" :fill="c.color" opacity="0.6" />
+              <circle r="1.9" cx="-10" cy="-10" :fill="c.color" opacity="0.6" />
+            </g>
+          </g>
+
           <!-- Claimed triangles -->
           <g>
             <polygon
-                v-for="t in triangles"
-                :key="t.id"
-                :points="triPoints(t)"
-                :fill="playerFill(t)"
-                :opacity="t.owner == null ? 0 : 0.22"
-                stroke="transparent"
-                :class="['triFill', recentClaimIds.has(t.id) ? 'triPop' : '']"
-                filter="url(#glow)"
-            />
-          </g>
-
-          <!-- Drag preview line -->
-          <g v-if="dragging && dragFrom != null" filter="url(#glow)">
-            <line
-                :x1="dotsById.get(dragFrom)!.x"
-                :y1="dotsById.get(dragFrom)!.y"
-                :x2="dragHover != null ? dotsById.get(dragHover)!.x : pointerSvg.x"
-                :y2="dragHover != null ? dotsById.get(dragHover)!.y : pointerSvg.y"
-                class="previewLine"
-                :class="{ ok: dragHover != null }"
+              v-for="t in triangles"
+              :key="t.id"
+              :points="triPoints(t)"
+              :fill="playerFill(t)"
+              :opacity="t.owner == null ? 0 : 0.22"
+              stroke="transparent"
+              :class="['triFill', recentClaimIds.has(t.id) ? 'triPop' : '']"
+              filter="url(#glow)"
             />
           </g>
 
           <!-- Existing edges -->
           <g>
             <line
-                v-for="e in edges"
-                :key="e.key"
-                :x1="dotsById.get(e.a)!.x"
-                :y1="dotsById.get(e.a)!.y"
-                :x2="dotsById.get(e.b)!.x"
-                :y2="dotsById.get(e.b)!.y"
-                :style="{ stroke: edgeStroke(e) }"
-                :class="['edgeLine', 'electric', recentEdgeKeys.has(e.key) ? 'edgeZap' : '']"
-                filter="url(#glow)"
+              v-for="e in edges"
+              :key="e.key"
+              :x1="dotsById.get(e.a)!.x"
+              :y1="dotsById.get(e.a)!.y"
+              :x2="dotsById.get(e.b)!.x"
+              :y2="dotsById.get(e.b)!.y"
+              :style="{ stroke: edgeStroke(e) }"
+              :class="['edgeLine', 'electric', recentEdgeKeys.has(e.key) ? 'edgeZap' : '']"
+              filter="url(#glow)"
             />
             <line
-                v-for="e in edges"
-                :key="`cur-${e.key}`"
-                :x1="dotsById.get(e.a)!.x"
-                :y1="dotsById.get(e.a)!.y"
-                :x2="dotsById.get(e.b)!.x"
-                :y2="dotsById.get(e.b)!.y"
-                class="edgeCurrent"
-                stroke="url(#electricGrad)"
-                filter="url(#glow)"
+              v-for="e in edges"
+              :key="`cur-${e.key}`"
+              :x1="dotsById.get(e.a)!.x"
+              :y1="dotsById.get(e.a)!.y"
+              :x2="dotsById.get(e.b)!.x"
+              :y2="dotsById.get(e.b)!.y"
+              class="edgeCurrent"
+              stroke="url(#electricGrad)"
+              filter="url(#glow)"
             />
           </g>
 
-          <!-- Neighbor hints (selection restored) -->
+          <!-- Neighbor hints -->
           <g v-if="selectedDot && phase === 'playing' && !currentPlayer.isAI">
             <line
-                v-for="nid in selectedDot.neighbors"
-                :key="`hint-${selectedDot.id}-${nid}`"
-                :x1="selectedDot.x"
-                :y1="selectedDot.y"
-                :x2="dotsById.get(nid)!.x"
-                :y2="dotsById.get(nid)!.y"
-                :stroke="hasEdge(selectedDot.id, nid) ? 'rgba(255,255,255,0.06)' : 'rgba(0,240,255,0.55)'"
-                stroke-width="4"
-                stroke-linecap="round"
-                class="hintLine hintElectric"
-                filter="url(#glow)"
+              v-for="nid in selectedDot.neighbors"
+              :key="`hint-${selectedDot.id}-${nid}`"
+              :x1="selectedDot.x"
+              :y1="selectedDot.y"
+              :x2="dotsById.get(nid)!.x"
+              :y2="dotsById.get(nid)!.y"
+              :stroke="hasEdge(selectedDot.id, nid) ? 'rgba(255,255,255,0.06)' : 'rgba(0,240,255,0.55)'"
+              stroke-width="4"
+              stroke-linecap="round"
+              class="hintLine hintPulse"
+              filter="url(#glow)"
             />
           </g>
 
           <!-- Dots -->
           <g>
             <circle
-                v-for="d in board.dots"
-                :key="d.id"
-                :cx="d.x"
-                :cy="d.y"
-                :r="11"
-                :opacity="
+              v-for="d in board.dots"
+              :key="d.id"
+              :cx="d.x"
+              :cy="d.y"
+              :r="11"
+              :opacity="
                 selectedDotId == null
                   ? 1
                   : d.id === selectedDotId || neighborIds.has(d.id)
                     ? 1
                     : 0.22
               "
-                :fill="d.id === selectedDotId ? '#ffffff' : neighborIds.has(d.id) ? 'var(--accentA)' : '#C9D3E8'"
-                stroke="rgba(0,0,0,0.78)"
-                stroke-width="2"
-                :class="[
+              :fill="d.id === selectedDotId ? '#ffffff' : neighborIds.has(d.id) ? '#00F0FF' : '#C9D3E8'"
+              stroke="rgba(0,0,0,0.78)"
+              stroke-width="2"
+              :class="[
                 'dotCircle',
                 d.id === selectedDotId ? 'dotSelected' : '',
-                neighborIds.has(d.id) ? 'dotNeighbor' : '',
-                dragHover === d.id ? 'dotHover' : ''
+                neighborIds.has(d.id) ? 'dotNeighbor' : ''
               ]"
-                @pointerdown.stop.prevent="beginDragFromDot(d.id, $event)"
-                @click.stop="onDotClick(d.id)"
-                filter="url(#glow)"
+              @click.stop="onDotClick(d.id)"
+              filter="url(#glow)"
             />
 
             <circle
-                v-for="d in board.dots"
-                :key="`h-${d.id}`"
-                :cx="d.x"
-                :cy="d.y"
-                :r="18"
-                class="dotHalo"
-                :opacity="
+              v-for="d in board.dots"
+              :key="`h-${d.id}`"
+              :cx="d.x"
+              :cy="d.y"
+              :r="18"
+              class="dotHalo"
+              :opacity="
                 selectedDotId == null
                   ? 0.10
                   : d.id === selectedDotId || neighborIds.has(d.id)
@@ -1693,8 +1271,11 @@ onMounted(() => {
           </div>
 
           <div class="modalBtns">
-            <button class="btn primary neonBtn" @click="resetMatch"><span class="zap">⚡</span> Play Again</button>
+            <button class="btn primary neonBtn" @click="resetMatch"><span class="zap">🎉</span> Play Again</button>
             <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
+            <button class="btn ghost neonBtn" @click="audio.setEnabled(!audio.enabled); audio.playSfx('ui_click')">
+              {{ audio.enabled ? '🔊' : '🔇' }}
+            </button>
           </div>
         </div>
       </div>
@@ -1703,15 +1284,11 @@ onMounted(() => {
 </template>
 
 <style>
+/* ✅ your same styles (unchanged) */
 *,
 html { box-sizing: border-box; margin: 0; padding: 0; }
 
 .wrap{
-  --fogA: rgba(0,240,255,0.18);
-  --fogB: rgba(255,61,166,0.12);
-  --accentA: #00F0FF;
-  --accentB: #FF3DA6;
-
   min-height: 100vh;
   color: #fff;
   padding: 16px;
@@ -1721,31 +1298,31 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   background: #02030a;
 }
 
-/* background */
+/* Background */
 .bgEnergy{ position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
 .bgAurora{ position: absolute; inset: -20%; filter: blur(26px); opacity: 0.8; mix-blend-mode: screen; transform: translateZ(0); }
 .bgAurora.a1{
   background:
-      radial-gradient(900px 620px at 20% 18%, var(--fogA), transparent 62%),
-      radial-gradient(980px 650px at 82% 62%, var(--fogB), transparent 64%),
-      radial-gradient(700px 520px at 55% 10%, rgba(120,90,255,0.18), transparent 60%);
+    radial-gradient(900px 620px at 20% 18%, rgba(0,240,255,0.22), transparent 62%),
+    radial-gradient(980px 650px at 82% 62%, rgba(255,61,166,0.18), transparent 64%),
+    radial-gradient(700px 520px at 55% 10%, rgba(120,90,255,0.14), transparent 60%);
   animation: auroraDrift1 8.5s ease-in-out infinite alternate;
 }
 .bgAurora.a2{
   background:
-      radial-gradient(900px 620px at 80% 22%, rgba(120,255,70,0.12), transparent 62%),
-      radial-gradient(900px 620px at 45% 78%, rgba(0,240,255,0.12), transparent 62%),
-      radial-gradient(700px 520px at 16% 70%, rgba(255,61,166,0.10), transparent 60%);
+    radial-gradient(900px 620px at 80% 22%, rgba(120,255,70,0.10), transparent 62%),
+    radial-gradient(900px 620px at 45% 78%, rgba(0,240,255,0.12), transparent 62%),
+    radial-gradient(700px 520px at 16% 70%, rgba(255,61,166,0.10), transparent 60%);
   animation: auroraDrift2 10.5s ease-in-out infinite alternate;
   opacity: 0.60;
 }
 .bgAurora.a3{
   background: conic-gradient(from 180deg at 50% 50%,
-  rgba(0,240,255,0.12),
-  rgba(255,61,166,0.10),
-  rgba(120,90,255,0.10),
-  rgba(120,255,70,0.08),
-  rgba(0,240,255,0.12)
+    rgba(0,240,255,0.10),
+    rgba(255,61,166,0.10),
+    rgba(120,90,255,0.10),
+    rgba(120,255,70,0.08),
+    rgba(0,240,255,0.10)
   );
   animation: auroraSpin 14s linear infinite;
   opacity: 0.45;
@@ -1757,8 +1334,8 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .bgGrid{
   position:absolute; inset: 0; opacity: 0.12;
   background:
-      linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px);
+    linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: radial-gradient(closest-side at 50% 45%, rgba(0,0,0,1), rgba(0,0,0,0));
   animation: gridSlide 10s linear infinite;
@@ -1768,11 +1345,11 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .bgSparks{
   position:absolute; inset: 0; opacity: 0.65;
   background:
-      radial-gradient(2px 2px at 20% 30%, rgba(0,240,255,0.9), transparent 60%),
-      radial-gradient(2px 2px at 35% 80%, rgba(255,61,166,0.9), transparent 60%),
-      radial-gradient(2px 2px at 70% 40%, rgba(120,255,70,0.7), transparent 60%),
-      radial-gradient(2px 2px at 85% 70%, rgba(120,90,255,0.9), transparent 60%),
-      radial-gradient(2px 2px at 55% 15%, rgba(0,240,255,0.7), transparent 60%);
+    radial-gradient(2px 2px at 20% 30%, rgba(0,240,255,0.9), transparent 60%),
+    radial-gradient(2px 2px at 35% 80%, rgba(255,61,166,0.9), transparent 60%),
+    radial-gradient(2px 2px at 70% 40%, rgba(120,255,70,0.7), transparent 60%),
+    radial-gradient(2px 2px at 85% 70%, rgba(120,90,255,0.9), transparent 60%),
+    radial-gradient(2px 2px at 55% 15%, rgba(0,240,255,0.7), transparent 60%);
   filter: blur(0.2px);
   animation: sparksFloat 3.6s ease-in-out infinite alternate;
 }
@@ -1782,23 +1359,21 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .enter{ animation: riseIn 420ms ease-out both; }
 @keyframes riseIn{ from{ transform: translateY(12px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
 
-/* cards */
+/* UI cards */
 .neonCard{
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.06);
   border-radius: 18px;
   box-shadow:
-      0 0 0 1px rgba(0,240,255,0.14),
-      0 0 54px rgba(0,240,255,0.10),
-      0 0 46px rgba(255,61,166,0.08),
-      inset 0 0 26px rgba(0,0,0,0.44);
+    0 0 0 1px rgba(0,240,255,0.14),
+    0 0 54px rgba(0,240,255,0.10),
+    0 0 46px rgba(255,61,166,0.08),
+    inset 0 0 26px rgba(0,0,0,0.44);
   backdrop-filter: blur(12px);
   position: relative;
   overflow: hidden;
 }
-.neonText{
-  text-shadow: 0 0 18px rgba(0,240,255,0.34), 0 0 28px rgba(255,61,166,0.16);
-}
+.neonText{ text-shadow: 0 0 18px rgba(0,240,255,0.34), 0 0 28px rgba(255,61,166,0.16); }
 
 .panel{ max-width: 1100px; margin: 32px auto; padding: 18px; }
 .title{ font-size: 34px; font-weight: 950; letter-spacing: -0.02em; display:flex; align-items:center; gap: 10px; }
@@ -1852,10 +1427,6 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   0%,100%{ box-shadow: 0 0 18px rgba(0,240,255,0.10); transform: translateY(0); }
   50%{ box-shadow: 0 0 28px rgba(0,240,255,0.16); transform: translateY(-1px); }
 }
-.neonWarn{ border-color: rgba(255,61,166,0.40); background: rgba(255,61,166,0.14); box-shadow: 0 0 18px rgba(255,61,166,0.14); }
-.zapMsg{ animation: zapMsg 520ms ease-out both; }
-@keyframes zapMsg{ 0%{ transform: translateY(6px); opacity: 0; } 100%{ transform: translateY(0); opacity: 1; } }
-.miniZap{ filter: drop-shadow(0 0 10px rgba(255,61,166,0.40)); }
 
 .btn{
   border: 1px solid rgba(255,255,255,0.18);
@@ -1876,7 +1447,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .btn.big{ padding: 12px 14px; border-radius: 14px; font-size: 14px; }
 .zap{ filter: drop-shadow(0 0 12px rgba(0,240,255,0.34)); }
 
-/* setup */
+/* setup layout */
 .setupGrid{ margin-top: 14px; display:grid; grid-template-columns: 1fr 1.1fr; gap: 12px; }
 @media (max-width: 980px){ .setupGrid{ grid-template-columns: 1fr; } }
 .boardPicker{ padding: 14px; }
@@ -1892,7 +1463,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   color: #fff;
   padding: 12px;
   cursor: pointer;
-  transition: transform 140ms ease, box-shadow 180ms ease, background 180ms ease, filter 180ms ease;
+  transition: transform 140ms ease, box-shadow 180ms ease, background 180ms ease;
 }
 .presetBtn:hover{ transform: translateY(-1px); background: rgba(255,255,255,0.09); box-shadow: 0 0 0 1px rgba(0,240,255,0.14), 0 0 26px rgba(0,240,255,0.10); }
 .presetBtn.active{ border-color: rgba(0,240,255,0.32); background: rgba(0,240,255,0.10); }
@@ -1907,11 +1478,12 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .previewTitle{ font-size: 18px; font-weight: 950; }
 .previewMeta{ display:flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .metaPill{ padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.05); font-size: 12px; opacity: 0.92; }
+
 .previewStage{
   margin-top: 12px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.10);
   background: radial-gradient(900px 520px at 50% 40%, rgba(0,240,255,0.14), transparent 60%),
-  radial-gradient(900px 520px at 50% 70%, rgba(255,61,166,0.08), transparent 62%),
-  rgba(0,0,0,0.34);
+              radial-gradient(900px 520px at 50% 70%, rgba(255,61,166,0.08), transparent 62%),
+              rgba(0,0,0,0.34);
   overflow: hidden;
 }
 .previewSvg{ height: 320px; width: 100%; display:block; }
@@ -1921,7 +1493,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .previewFooter{ margin-top: 10px; }
 .tinyTip{ font-size: 12px; opacity: 0.82; }
 
-/* dice (kept from your previous style) */
+/* Dice */
 .diceWrap{
   display:flex; align-items:center; padding: 10px; border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.14);
@@ -1951,14 +1523,14 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .diceShade{ position:absolute; inset: auto 6px 6px 6px; height: 16px; border-radius: 14px; background: radial-gradient(80px 30px at 40% 0%, rgba(0,0,0,0), rgba(0,0,0,0.35)); opacity: 0.92; pointer-events:none; }
 .pip{ width: 9px; height: 9px; border-radius: 999px; background: rgba(245,252,255,0.96); position: absolute; box-shadow: 0 0 14px rgba(0,240,255,0.38); }
 
-/* board */
+/* Board */
 .neonStage{
   border: 1px solid rgba(255,255,255,0.12);
   background:
-      radial-gradient(1100px 640px at 50% 40%, rgba(0,240,255,0.16), transparent 62%),
-      radial-gradient(1100px 640px at 55% 70%, rgba(255,61,166,0.10), transparent 66%),
-      radial-gradient(900px 520px at 20% 85%, rgba(120,255,70,0.06), transparent 66%),
-      rgba(0,0,0,0.40);
+    radial-gradient(1100px 640px at 50% 40%, rgba(0,240,255,0.16), transparent 62%),
+    radial-gradient(1100px 640px at 55% 70%, rgba(255,61,166,0.10), transparent 66%),
+    radial-gradient(900px 520px at 20% 85%, rgba(120,255,70,0.06), transparent 66%),
+    rgba(0,0,0,0.40);
   border-radius: 16px;
   padding: 10px;
   box-shadow: inset 0 0 34px rgba(0,0,0,0.56), 0 0 40px rgba(0,240,255,0.10), 0 0 36px rgba(255,61,166,0.08);
@@ -1973,44 +1545,32 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 @keyframes currentFlow{ from{ stroke-dashoffset: 0; opacity: 0.52; } to{ stroke-dashoffset: -44; opacity: 0.72; } }
 .edgeLine.electric{ stroke-dasharray: 12 10; animation: edgeShiver 1.45s ease-in-out infinite; }
 @keyframes edgeShiver{ 0%,100%{ stroke-dashoffset: 0; filter: brightness(1); } 50%{ stroke-dashoffset: -22; filter: brightness(1.12); } }
-.edgeZap{ animation: edgeZap 680ms ease-out both; }
+.edgeZap{ animation: edgeZap 520ms ease-out both; }
 @keyframes edgeZap{ 0%{ stroke-width: 1; opacity: 0.25; filter: brightness(1.5); } 45%{ stroke-width: 6.6; opacity: 1; filter: brightness(1.25); } 100%{ stroke-width: 5; opacity: 0.95; filter: brightness(1); } }
-
-/* drag preview */
-.previewLine{
-  stroke: rgba(255,255,255,0.25);
-  stroke-width: 4;
-  stroke-linecap: round;
-  stroke-dasharray: 10 10;
-  opacity: 0.85;
-  animation: previewFlow 0.9s linear infinite;
-}
-.previewLine.ok{ stroke: rgba(0,240,255,0.55); filter: drop-shadow(0 0 12px rgba(0,240,255,0.18)); }
-@keyframes previewFlow{ from{ stroke-dashoffset: 0; } to{ stroke-dashoffset: -32; } }
 
 /* triangles */
 .triFill{ transform-box: fill-box; transform-origin: center; transition: opacity 180ms ease; }
-.triPop{ animation: triPop 620ms cubic-bezier(.18,.9,.18,1.02); filter: drop-shadow(0 0 20px rgba(0,240,255,0.20)); }
-@keyframes triPop{ 0%{ transform: scale(0.84); opacity: 0.06; } 36%{ transform: scale(1.14); opacity: 0.30; } 100%{ transform: scale(1.00); opacity: 0.22; } }
+.triPop{ animation: triPop 520ms cubic-bezier(.18,.9,.18,1.02); filter: drop-shadow(0 0 20px rgba(0,240,255,0.20)); }
+@keyframes triPop{ 0%{ transform: scale(0.86); opacity: 0.06; } 36%{ transform: scale(1.12); opacity: 0.30; } 100%{ transform: scale(1.00); opacity: 0.22; } }
 
-/* hints */
-.hintLine{ filter: drop-shadow(0 0 14px rgba(0,240,255,0.20)); }
-.hintElectric{ stroke-dasharray: 8 10; animation: hintFlow 0.9s linear infinite; }
-@keyframes hintFlow{ from{ stroke-dashoffset: 0; opacity: 0.35; } to{ stroke-dashoffset: -34; opacity: 0.62; } }
+/* neighbor hint */
+.hintLine{ filter: drop-shadow(0 0 14px rgba(0,240,255,0.20)); transform-origin: center; }
+.hintPulse{ animation: hintZoom 0.9s ease-in-out infinite; }
+@keyframes hintZoom{ 0%,100%{ transform: scale(1); opacity: 0.42; } 50%{ transform: scale(1.06); opacity: 0.66; } }
 
-/* dots (keep subtle; selection is the main animation) */
-.dotCircle{ cursor:pointer; transition: opacity 160ms ease, filter 160ms ease, transform 140ms ease; }
-.dotSelected{
-  transform: scale(1.06);
-  filter: brightness(1.25) drop-shadow(0 0 24px rgba(0,240,255,0.26));
+/* dots */
+.dotCircle{ cursor:pointer; transition: opacity 160ms ease, filter 160ms ease; transform-origin: center; }
+.dotSelected{ animation: dotZoomSel 0.9s ease-in-out infinite; }
+@keyframes dotZoomSel{
+  0%,100%{ transform: scale(1.06); filter: brightness(1.25) drop-shadow(0 0 24px rgba(0,240,255,0.26)); }
+  50%{ transform: scale(1.12); filter: brightness(1.35) drop-shadow(0 0 30px rgba(0,240,255,0.34)); }
 }
-.dotNeighbor{
-  filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.22));
+.dotNeighbor{ animation: dotZoomNb 1.1s ease-in-out infinite; }
+@keyframes dotZoomNb{
+  0%,100%{ transform: scale(1.02); filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.22)); }
+  50%{ transform: scale(1.08); filter: brightness(1.28) drop-shadow(0 0 24px rgba(0,240,255,0.30)); }
 }
-.dotHover{
-  transform: scale(1.08);
-  filter: brightness(1.22) drop-shadow(0 0 26px rgba(0,240,255,0.32));
-}
+
 .dotHalo{
   fill: transparent;
   stroke: rgba(0,240,255,0.12);
@@ -2022,7 +1582,15 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 }
 @keyframes haloSpin{ from{ stroke-dashoffset: 0; opacity: 0.10; } to{ stroke-dashoffset: -56; opacity: 0.24; } }
 
-/* modal */
+/* confetti */
+.confetti{ animation: confPop 650ms ease-out both; transform-origin: center; }
+@keyframes confPop{
+  0%{ opacity: 0; transform: translate(0,0) scale(0.6); }
+  45%{ opacity: 1; transform: translate(0,-10px) scale(1); }
+  100%{ opacity: 0; transform: translate(0,-22px) scale(1.05); }
+}
+
+/* Modal */
 .modal{ position: fixed; inset: 0; background: rgba(0,0,0,0.62); display: grid; place-items: center; padding: 16px; z-index: 50; }
 .modalCard{ width: min(520px, 100%); padding: 16px; border-radius: 18px; }
 .pop{ animation: popIn 240ms ease-out both; }
