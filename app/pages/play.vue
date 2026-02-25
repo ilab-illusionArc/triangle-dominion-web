@@ -44,6 +44,36 @@ function toggleBgm() {
 }
 
 /* =========================================================
+   SCORE BRIDGE (postMessage to wrapper / parent)
+========================================================= */
+type IAScorePayload = {
+  type: 'IA_SCORE'
+  game: 'triangle-arena'
+  score: number
+  meta?: Record<string, any>
+  ts: number
+  version: 1
+}
+
+function postIAScore(score: number, meta: Record<string, any> = {}) {
+  // only if embedded in an iframe
+  if (typeof window === 'undefined') return
+  if (window.parent === window) return
+
+  const payload: IAScorePayload = {
+    type: 'IA_SCORE',
+    game: 'triangle-arena',
+    score,
+    meta,
+    ts: Date.now(),
+    version: 1
+  }
+
+  // wrapper will validate origin before relaying to hub
+  window.parent.postMessage(payload, '*')
+}
+
+/* =========================================================
    TYPES
 ========================================================= */
 type Dot = { id: number; x: number; y: number; neighbors: number[] }
@@ -689,6 +719,17 @@ function endGameIfNoMoves() {
     flash('Game Over')
     audio.playSfx('game_over')
     audio.playSfx('win_fanfare', 0.85)
+
+    // ✅ SEND SCORE TO PARENT/WRAPPER
+    const you = players.value.find((p) => p.id === 0)
+    const ai = players.value.find((p) => p.id === 1)
+    postIAScore(you?.score ?? 0, {
+      mode: 'vs-ai',
+      boardId: selectedBoardId.value,
+      youScore: you?.score ?? 0,
+      aiScore: ai?.score ?? 0,
+      winner: winners.value.length === 1 ? winners.value[0].name : 'tie'
+    })
   }
 }
 
