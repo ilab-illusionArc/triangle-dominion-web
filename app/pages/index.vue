@@ -771,7 +771,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .iconWall{
   position: absolute;
   inset: 0;
-  background-image: url('/images/triangle-arena-app-icon.png');
+  background-image: url('/images/triangle-arena-thumbnail.jpeg');
   background-repeat: no-repeat;
   background-position: 50% 40%;
   background-size: cover;
