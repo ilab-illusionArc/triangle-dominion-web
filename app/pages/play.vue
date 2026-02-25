@@ -3,6 +3,19 @@
 useHead({ title: 'Triangle Arena — vs AI' })
 
 /* =========================================================
+   ROUTE (SSR-SAFE INITIALIZATION)
+   Fix: avoid theme changing after refresh (SSR hydration mismatch)
+========================================================= */
+const route = useRoute()
+
+function normalizeBoardId(v: unknown) {
+  const s = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0] ?? '') : ''
+  return s || 'hexagon'
+}
+const initialBoardId = normalizeBoardId(route.query.board)
+const shouldAutostart = String(route.query.autostart ?? '') === '1'
+
+/* =========================================================
    AUDIO (game bgm + sfx everywhere)
 ========================================================= */
 const audio = useAudioFx()
@@ -10,6 +23,11 @@ const audio = useAudioFx()
 onMounted(() => {
   audio.initAudio()
   void audio.playBgm('bgm_game')
+
+  // If autostart is requested, do it after audio init (no SSR window access).
+  if (shouldAutostart && phase.value === 'setup') {
+    startGame(true)
+  }
 })
 
 function toggleSfx() {
@@ -248,7 +266,7 @@ function presetHexagon() {
 }
 
 /* =========================================================
-   BOARD PRESETS (must match index.vue colors)
+   BOARD PRESETS
 ========================================================= */
 type BoardPreset = {
   id: string
@@ -332,14 +350,15 @@ const BOARD_PRESETS: BoardPreset[] = [
 ]
 
 /* =========================================================
-   BOARD STATE
+   BOARD STATE (SSR-SAFE)
 ========================================================= */
-const selectedBoardId = ref<string>('hexagon')
+const selectedBoardId = ref<string>(initialBoardId)
 function buildBoardById(id: string) {
   const p = BOARD_PRESETS.find((x) => x.id === id) ?? BOARD_PRESETS[0]
   return p.build()
 }
 const board = ref(buildBoardById(selectedBoardId.value))
+
 const dotsById = computed(() => {
   const m = new Map<number, Dot>()
   for (const d of board.value.dots) m.set(d.id, d)
@@ -620,21 +639,12 @@ function legalMovesList(): Move[] {
   return legal
 }
 const remainingLegalMovesCount = computed(() => legalMovesList().length)
-
 function hasAnyLegalMove() {
   return remainingLegalMovesCount.value > 0
 }
 
 /* =========================================================
-   CRITICAL FIX:
-   Dice should never give a number you cannot actually finish
-   in the SAME TURN.
-
-   remainingLegalMovesCount can be misleading because after you
-   draw one edge, crossings may remove all other options.
-
-   We estimate the maximum drawable edges in one turn by running
-   multiple random simulations (up to 6 steps).
+   CRITICAL FIX: Dice feasibility cap
 ========================================================= */
 function estimateMaxDrawableThisTurn(maxDepth = 6, tries = 90): number {
   const baseLegal = legalMovesList()
@@ -642,11 +652,9 @@ function estimateMaxDrawableThisTurn(maxDepth = 6, tries = 90): number {
   const depthCap = Math.min(maxDepth, baseLegal.length)
   let best = 1
 
-  // keep it fast
   const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)]
 
   for (let t = 0; t < tries; t++) {
-    // store added keys so we can revert quickly
     const addedKeys: EdgeKey[] = []
     let count = 0
 
@@ -654,7 +662,6 @@ function estimateMaxDrawableThisTurn(maxDepth = 6, tries = 90): number {
       const legal = legalMovesList()
       if (!legal.length) break
       const m = pick(legal)
-      // place
       addEdge(m.a, m.b)
       addedKeys.push(m.key)
       count++
@@ -662,9 +669,7 @@ function estimateMaxDrawableThisTurn(maxDepth = 6, tries = 90): number {
       if (best >= depthCap) break
     }
 
-    // revert simulation edges (do NOT affect scoring/triangles)
     for (let i = addedKeys.length - 1; i >= 0; i--) removeEdgeKey(addedKeys[i])
-    // also revert potential triangle claims (none were applied; addEdge only touched edges)
   }
 
   return best
@@ -673,6 +678,8 @@ function estimateMaxDrawableThisTurn(maxDepth = 6, tries = 90): number {
 /* =========================================================
    GAME OVER CHECK
 ========================================================= */
+const selectedDotId = ref<number | null>(null)
+
 function endGameIfNoMoves() {
   if (!hasAnyLegalMove()) {
     phase.value = 'gameover'
@@ -694,10 +701,6 @@ const canRoll = computed(() => {
   return remainingLegalMovesCount.value > 0
 })
 
-/**
- * ✅ IMPORTANT RULE (fixed properly):
- * Dice never gives > maximum drawable edges this turn.
- */
 async function rollDice() {
   if (phase.value !== 'playing') return
   if (rolled.value != null && linesLeft.value > 0) return
@@ -710,7 +713,6 @@ async function rollDice() {
   audio.unlockAudio()
   audio.playSfx('dice_roll')
 
-  // cap by what is ACTUALLY possible to finish in one turn
   const feasible = estimateMaxDrawableThisTurn(6, 90)
   const cap = Math.min(6, feasible)
 
@@ -756,7 +758,6 @@ async function endTurn() {
 /* =========================================================
    SELECTION + CLICK CONNECT
 ========================================================= */
-const selectedDotId = ref<number | null>(null)
 const selectedDot = computed(() => (selectedDotId.value == null ? null : dotsById.value.get(selectedDotId.value) || null))
 
 const eligibleNeighborIds = computed(() => {
@@ -784,14 +785,12 @@ function onDotClick(id: number) {
 
   audio.unlockAudio()
 
-  // before roll: just selecting a dot
   if (rolled.value == null || linesLeft.value <= 0) {
     selectedDotId.value = selectedDotId.value === id ? null : id
     audio.playSfx('dot_select', 0.75)
     return
   }
 
-  // first click after roll: pick starting dot
   if (selectedDotId.value == null) {
     selectedDotId.value = id
     audio.playSfx('dot_select', 0.75)
@@ -845,7 +844,6 @@ function onDotClick(id: number) {
 
   selectedDotId.value = b
 
-  // if the board is stuck now, game ends immediately (even if linesLeft > 0)
   if (!hasAnyLegalMove()) {
     endGameIfNoMoves()
     return
@@ -938,7 +936,13 @@ function pickAIMoveWise(linesRemaining: number): Move | null {
 
     const center = edgeCenterBonus(m.a, m.b)
 
-    const score = immediate * 5200 + setup * setupWeight - danger * dangerWeight - oppBest * oppWeight + center * 26 + Math.random() * 0.18
+    const score =
+      immediate * 5200 +
+      setup * setupWeight -
+      danger * dangerWeight -
+      oppBest * oppWeight +
+      center * 26 +
+      Math.random() * 0.18
 
     if (score > bestScore + 1e-9) {
       bestScore = score
@@ -1005,19 +1009,37 @@ function hardResetState() {
   for (const p of players.value) p.score = 0
 }
 
-function loadBoard(id: string) {
-  audio.unlockAudio()
-  audio.playSfx('ui_click', 0.9)
-
-  selectedBoardId.value = id
-  board.value = buildBoardById(id)
+// SSR-safe “set board” (no audio, no window assumptions)
+function setBoardIdSSR(id: string) {
+  const safe = BOARD_PRESETS.find((x) => x.id === id)?.id ?? BOARD_PRESETS[0].id
+  selectedBoardId.value = safe
+  board.value = buildBoardById(safe)
   buildTriangles()
   hardResetState()
 }
 
-function startGame() {
+// Client action (with audio)
+function loadBoard(id: string) {
   audio.unlockAudio()
-  audio.playSfx('ui_click')
+  audio.playSfx('ui_click', 0.9)
+  setBoardIdSSR(id)
+}
+
+// ✅ Keep URL in sync without theme flicker on refresh
+watch(
+  () => route.query.board,
+  (v) => {
+    const id = normalizeBoardId(v)
+    if (id !== selectedBoardId.value) setBoardIdSSR(id)
+  },
+  { immediate: true }
+)
+
+function startGame(silent = false) {
+  if (!silent) {
+    audio.unlockAudio()
+    audio.playSfx('ui_click')
+  }
 
   players.value = [
     { id: 0, name: 'You', color: '#00F0FF', score: 0, isAI: false },
@@ -1067,22 +1089,11 @@ const themeVars = computed(() => ({
   '--cardbg': selectedPreset.value.bg,
   '--chip': selectedPreset.value.chip
 }))
-
-/* =========================================================
-   ROUTE INTEGRATION
-========================================================= */
-const route = useRoute()
-onMounted(() => {
-  const boardId = String(route.query.board ?? '')
-  if (boardId) loadBoard(boardId)
-
-  if (String(route.query.autostart ?? '') === '1') startGame()
-})
 </script>
 
 <template>
   <div class="wrap" :style="themeVars" @pointerdown="audio.unlockAudio()">
-    <!-- background (tinted by selected board) -->
+    <!-- background -->
     <div class="bgEnergy" aria-hidden="true">
       <div class="bgTint" :style="{ background: selectedPreset.bg }"></div>
       <div class="bgAurora a1"></div>
@@ -1090,6 +1101,7 @@ onMounted(() => {
       <div class="bgAurora a3"></div>
       <div class="bgGrid"></div>
       <div class="bgSparks"></div>
+      <div class="bgNoise"></div>
     </div>
 
     <!-- SETUP -->
@@ -1107,7 +1119,6 @@ onMounted(() => {
             <div class="pickerHint">Roll dice → draw exactly N edges → triangles auto-claim.</div>
           </div>
 
-          <!-- colorful board buttons (same palette as index) -->
           <div class="presetList">
             <button
               v-for="p in BOARD_PRESETS"
@@ -1127,7 +1138,7 @@ onMounted(() => {
           </div>
 
           <div class="bigActions">
-            <button class="btn primary neonBtn big" @click="startGame">
+            <button class="btn primary neonBtn big" @click="startGame()">
               <span class="zap">🎲</span> Start Match
             </button>
 
@@ -1254,7 +1265,6 @@ onMounted(() => {
             </linearGradient>
           </defs>
 
-          <!-- triangles -->
           <g>
             <polygon
               v-for="t in triangles"
@@ -1267,7 +1277,6 @@ onMounted(() => {
             />
           </g>
 
-          <!-- edges -->
           <g>
             <line
               v-for="e in edges"
@@ -1293,7 +1302,6 @@ onMounted(() => {
             />
           </g>
 
-          <!-- neighbor hints -->
           <g v-if="selectedDot && phase === 'playing' && !currentPlayer.isAI">
             <line
               v-for="nid in Array.from(eligibleNeighborIds)"
@@ -1307,7 +1315,6 @@ onMounted(() => {
             />
           </g>
 
-          <!-- dots -->
           <g>
             <circle
               v-for="d in board.dots"
@@ -1327,7 +1334,6 @@ onMounted(() => {
         </svg>
       </div>
 
-      <!-- bottom dock -->
       <div class="bottomDock" :class="{ locked: !canRoll }" aria-label="Dice controls">
         <div class="dockSide">
           <div class="dockStat">
@@ -1364,7 +1370,6 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- gameover -->
       <div v-if="phase === 'gameover'" class="modal">
         <div class="modalCard neonCard pop">
           <div class="modalTitle neonText">Game Over</div>
@@ -1391,24 +1396,24 @@ onMounted(() => {
 
 <style>
 *,
-html { box-sizing: border-box; margin: 0; padding: 0; }
+*::before,
+*::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root{
-  --dock-h: 96px;
+  --dock-h: 98px;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
 .wrap{
-  /* theme vars from selected board */
   --accent: #00F0FF;
   --glow: rgba(0,240,255,0.30);
   --cardbg: radial-gradient(900px 420px at 20% 20%, rgba(0,240,255,0.18), transparent 62%);
   --chip: rgba(0,240,255,0.12);
 
-  min-height: 100vh;
+  min-height: 100dvh;
   color: #fff;
   padding: 16px;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   position: relative;
   overflow: hidden;
   background: #02030a;
@@ -1449,7 +1454,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 @keyframes auroraSpin{ from{ transform: rotate(0deg) scale(1.12); } to{ transform: rotate(360deg) scale(1.12); } }
 
 .bgGrid{
-  position:absolute; inset: 0; opacity: 0.12;
+  position:absolute; inset: 0; opacity: 0.11;
   background:
     linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px);
@@ -1472,6 +1477,19 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 }
 @keyframes sparksFloat{ from{ transform: translateY(0px) translateX(0px); opacity: 0.50; } to{ transform: translateY(-10px) translateX(8px); opacity: 0.80; } }
 
+/* subtle grain */
+.bgNoise{
+  position:absolute; inset: 0;
+  opacity: 0.10;
+  background-image:
+    radial-gradient(circle at 10% 20%, rgba(255,255,255,0.24) 0 1px, transparent 2px),
+    radial-gradient(circle at 70% 60%, rgba(255,255,255,0.18) 0 1px, transparent 2px),
+    radial-gradient(circle at 40% 80%, rgba(255,255,255,0.14) 0 1px, transparent 2px);
+  background-size: 180px 180px;
+  mix-blend-mode: overlay;
+  filter: blur(0.2px);
+}
+
 .wrap > *{ position: relative; z-index: 1; }
 .enter{ animation: riseIn 420ms ease-out both; }
 @keyframes riseIn{ from{ transform: translateY(12px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
@@ -1482,10 +1500,10 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   background: rgba(255,255,255,0.06);
   border-radius: 18px;
   box-shadow:
-    0 0 0 1px rgba(0,240,255,0.14),
-    0 0 54px rgba(0,240,255,0.10),
-    0 0 46px rgba(255,61,166,0.08),
-    inset 0 0 26px rgba(0,0,0,0.44);
+    0 0 0 1px rgba(0,240,255,0.12),
+    0 0 60px rgba(0,240,255,0.10),
+    0 0 52px rgba(255,61,166,0.08),
+    inset 0 0 26px rgba(0,0,0,0.50);
   backdrop-filter: blur(12px);
   overflow: hidden;
 }
@@ -1585,7 +1603,6 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .pickerHint{ font-size: 12px; opacity: 0.82; }
 .presetList{ margin-top: 12px; display:flex; flex-direction: column; gap: 10px; }
 
-/* colorful preset cards */
 .presetBtn{
   --accent: #00F0FF;
   --glow: rgba(0,240,255,0.28);
@@ -1679,20 +1696,21 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   overflow: hidden;
   margin-bottom: calc(var(--dock-h) + var(--safe-b) + 8px);
 }
-.svg{ width: 100%; height: 72vh; display:block; }
+/* stable stage height */
+.svg{ width: 100%; height: min(72vh, 760px); display:block; }
 
 .edgeLine{ stroke-width: 5; stroke-linecap: round; opacity: 0.95; filter: drop-shadow(0 0 14px rgba(0,240,255,0.18)); }
 .edgeCurrent{ stroke-width: 3.4; stroke-linecap: round; opacity: 0.60; stroke-dasharray: 10 12; animation: currentFlow 1.0s linear infinite; mix-blend-mode: screen; }
 @keyframes currentFlow{ from{ stroke-dashoffset: 0; opacity: 0.52; } to{ stroke-dashoffset: -44; opacity: 0.72; } }
 
 .hintLine{
-  stroke: color-mix(in srgb, var(--accent) 70%, white 30%);
+  stroke: rgba(255,255,255,0.85);
   stroke-width: 4;
   stroke-linecap: round;
   filter: drop-shadow(0 0 14px rgba(0,240,255,0.20));
   animation: hintPulse 1.2s ease-in-out infinite;
 }
-@keyframes hintPulse{ 0%,100%{ opacity: 0.34; } 50%{ opacity: 0.56; } }
+@keyframes hintPulse{ 0%,100%{ opacity: 0.28; } 50%{ opacity: 0.56; } }
 .dotCircle{ cursor:pointer; transition: opacity 160ms ease, filter 160ms ease; }
 .dotCircle:hover{ filter: brightness(1.14); }
 
@@ -1712,8 +1730,8 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   background:
     radial-gradient(900px 320px at 25% 20%, rgba(0,240,255,0.14), transparent 62%),
     radial-gradient(900px 320px at 75% 70%, rgba(255,61,166,0.10), transparent 66%),
-    rgba(0,0,0,0.64);
-  backdrop-filter: blur(12px);
+    rgba(0,0,0,0.70);
+  backdrop-filter: blur(14px);
   box-shadow:
     0 0 0 1px rgba(0,240,255,0.10),
     0 0 34px rgba(0,240,255,0.10),
@@ -1782,7 +1800,6 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .diceBtn:active{ transform: translateY(0) scale(0.995); }
 .diceBtn.disabled{ opacity: 0.55; cursor: not-allowed; filter: saturate(0.85); }
 
-/* Dice */
 .diceFace{
   width: 60px; height: 60px;
   border-radius: 18px;
@@ -1828,7 +1845,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   font-weight: 1000;
   letter-spacing: 0.10em;
   color: var(--accent);
-  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 55%, rgba(255,255,255,0.0));
+  text-shadow: 0 0 14px rgba(0,240,255,0.26);
 }
 .capTop.off{
   color: rgba(255,255,255,0.82);
