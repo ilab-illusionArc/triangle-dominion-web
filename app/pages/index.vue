@@ -1,19 +1,15 @@
 <!-- app/pages/index.vue -->
-<!-- app/pages/index.vue -->
 <script setup lang="ts">
-useHead({ title: 'Triangle Dominion' })
+useHead({ title: 'Triangle Arena' })
 
 /* =========================================================
    AUDIO (SFX toggle + BGM toggle)
-   ✅ Requires updated useAudioFx() that has:
-      - sfxEnabled, bgmEnabled
-      - setSfxEnabled(), setBgmEnabled()
 ========================================================= */
 const audio = useAudioFx()
 
 onMounted(() => {
   audio.initAudio()
-  void audio.playBgm('bgm_menu') // will start after first user gesture if autoplay blocked
+  void audio.playBgm('bgm_menu')
 })
 
 function toggleSfx() {
@@ -27,48 +23,33 @@ function toggleBgm() {
   audio.unlockAudio()
   const next = !audio.bgmEnabled.value
   audio.setBgmEnabled(next)
-  // click feedback only if SFX is enabled
   if (audio.sfxEnabled.value) audio.playSfx('ui_click')
 }
 
 /* =========================================================
-   TYPES
-========================================================= */
-type Dot = { id: number; x: number; y: number; neighbors: number[] }
-
-type BoardPreset = {
-  id: string
-  name: string
-  tag: 'Shape'
-  description: string
-}
-
-/* =========================================================
-   ROUTING / UI STATE
+   UI STATE
 ========================================================= */
 const router = useRouter()
 const step = ref<'menu' | 'board'>('menu')
 const showHow = ref(false)
 
-function goPlay(boardId: string) {
+function goToBoardSelect() {
+  audio.unlockAudio()
+  audio.playSfx('ui_click')
+  step.value = 'board'
+}
+
+function backToMenu() {
+  audio.playSfx('ui_back')
+  step.value = 'menu'
+}
+
+function startBoard(boardId: string) {
+  audio.unlockAudio()
+  audio.playSfx('ui_click')
   audio.stopBgm(false)
   router.push({ path: '/play', query: { board: boardId, autostart: '1' } })
 }
-
-/** UX: ESC to close modal/back */
-function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    if (showHow.value) {
-      audio.playSfx('ui_modal_close')
-      showHow.value = false
-    } else if (step.value === 'board') {
-      audio.playSfx('ui_back')
-      step.value = 'menu'
-    }
-  }
-}
-onMounted(() => window.addEventListener('keydown', onKey))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 function openHow() {
   audio.unlockAudio()
@@ -79,19 +60,32 @@ function closeHow() {
   audio.playSfx('ui_modal_close')
   showHow.value = false
 }
-function toBoardSelect() {
-  audio.unlockAudio()
-  audio.playSfx('ui_click')
-  step.value = 'board'
+
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    if (showHow.value) closeHow()
+    else if (step.value === 'board') backToMenu()
+  }
+  if (e.key === 'Enter' && !showHow.value && step.value === 'menu') goToBoardSelect()
 }
-function backToMenu() {
-  audio.playSfx('ui_back')
-  step.value = 'menu'
-}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 /* =========================================================
-   EXACT BOARD GENERATION (SAME LOGIC AS /play)
+   BOARD PRESETS + SIMPLE PREVIEWS
+   (kept light but still generates proper dot/edge preview)
 ========================================================= */
+type Dot = { id: number; x: number; y: number; neighbors: number[] }
+
+type BoardPreset = {
+  id: string
+  name: string
+  description: string
+  accent: string
+  glow: string
+  bg: string
+}
+
 function dist2(ax: number, ay: number, bx: number, by: number) {
   const dx = ax - bx
   const dy = ay - by
@@ -168,7 +162,6 @@ function makeTriField(opts?: { rows?: number; cols?: number; spacing?: number; m
 }
 
 type RawFieldDot = ReturnType<typeof makeTriField>['dots'][number]
-
 function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: RawFieldDot) => boolean) {
   const kept = field.dots.filter(keep)
   const idMap = new Map<number, number>()
@@ -188,7 +181,7 @@ function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: Ra
   const maxX = Math.max(...dots.map((d) => d.x))
   const maxY = Math.max(...dots.map((d) => d.y))
 
-  const pad = 90
+  const pad = 70
   const w = maxX - minX + pad * 2
   const h = maxY - minY + pad * 2
 
@@ -241,7 +234,6 @@ function polygonMask(field: ReturnType<typeof makeTriField>, sides: number, radi
   return remapFilteredBoard(field, (d) => inside(d.x, d.y))
 }
 
-/* presets */
 function presetCircle() {
   const field = makeTriField({ rows: 13, cols: 15, spacing: 52, margin: 86 })
   const dots = field.dots
@@ -277,12 +269,12 @@ function presetHexagon() {
 }
 
 const BOARD_PRESETS: BoardPreset[] = [
-  { id: 'circle', name: 'Bubble Arena', tag: 'Shape', description: 'Round and bouncy. Easy to read, fun to combo.' },
-  { id: 'triangle', name: 'Tri Peak', tag: 'Shape', description: 'Sharp corners, quick fights, fast endings.' },
-  { id: 'square', name: 'Pixel Square', tag: 'Shape', description: 'Classic grid-ish feel, balanced edges.' },
-  { id: 'rectangle', name: 'Neon Strip', tag: 'Shape', description: 'Long arena—make chain captures!' },
-  { id: 'pentagon', name: 'Pentagon Park', tag: 'Shape', description: 'Weird angles = playful tactics.' },
-  { id: 'hexagon', name: 'Hex Hive', tag: 'Shape', description: 'Lots of options, high triangle potential.' }
+  { id: 'circle', name: 'Bubble Arena', description: 'Round and bouncy.', accent: '#00F0FF', glow: 'rgba(0,240,255,0.30)', bg: 'radial-gradient(800px 360px at 25% 20%, rgba(0,240,255,0.20), transparent 62%)' },
+  { id: 'triangle', name: 'Tri Peak', description: 'Sharp and fast.', accent: '#FF3DA6', glow: 'rgba(255,61,166,0.28)', bg: 'radial-gradient(800px 360px at 25% 20%, rgba(255,61,166,0.18), transparent 62%)' },
+  { id: 'square', name: 'Pixel Square', description: 'Balanced grid feel.', accent: '#7BFF46', glow: 'rgba(123,255,70,0.22)', bg: 'radial-gradient(800px 360px at 25% 20%, rgba(123,255,70,0.16), transparent 62%)' },
+  { id: 'rectangle', name: 'Neon Strip', description: 'Long arena lines.', accent: '#7C5AFF', glow: 'rgba(124,90,255,0.26)', bg: 'radial-gradient(800px 360px at 25% 20%, rgba(124,90,255,0.18), transparent 62%)' },
+  { id: 'pentagon', name: 'Pentagon Park', description: 'Playful angles.', accent: '#FFBE00', glow: 'rgba(255,190,0,0.24)', bg: 'radial-gradient(800px 360px at 25% 20%, rgba(255,190,0,0.16), transparent 62%)' },
+  { id: 'hexagon', name: 'Hex Hive', description: 'Many options.', accent: '#FF6B6B', glow: 'rgba(255,107,107,0.22)', bg: 'radial-gradient(800px 360px at 25% 20%, rgba(255,107,107,0.16), transparent 62%)' }
 ]
 
 function buildBoardById(id: string) {
@@ -294,9 +286,8 @@ function buildBoardById(id: string) {
   return presetHexagon()
 }
 
-/* previews */
 type Preview = { dots: Dot[]; width: number; height: number; edges: Array<{ a: number; b: number; key: string }> }
-function makePreviewEdgeKey(a: number, b: number) {
+function makeEdgeKey(a: number, b: number) {
   const x = Math.min(a, b)
   const y = Math.max(a, b)
   return `${x}_${y}`
@@ -306,7 +297,7 @@ function previewEdges(dots: Dot[]) {
   const edges: Array<{ a: number; b: number; key: string }> = []
   for (const d of dots) {
     for (const n of d.neighbors) {
-      const key = makePreviewEdgeKey(d.id, n)
+      const key = makeEdgeKey(d.id, n)
       if (seen.has(key)) continue
       seen.add(key)
       edges.push({ a: Math.min(d.id, n), b: Math.max(d.id, n), key })
@@ -327,80 +318,45 @@ const previews = computed<Record<string, Preview>>(() => {
 
 <template>
   <div class="wrap" @pointerdown="audio.unlockAudio()">
-    <!-- background -->
-    <div class="bgEnergy">
-      <div class="bgAurora a1"></div>
-      <div class="bgAurora a2"></div>
-      <div class="bgAurora a3"></div>
-      <div class="bgGrid"></div>
-      <div class="bgSparks"></div>
+    <!-- Background -->
+    <div class="bg" aria-hidden="true">
+      <div class="iconWall"></div>
+      <div class="topShade"></div>
+
+      <div class="aurora a1"></div>
+      <div class="aurora a2"></div>
+      <div class="grid"></div>
+      <div class="vignette"></div>
     </div>
 
-    <!-- MENU -->
-    <div v-if="step === 'menu'" class="panel neonCard enter">
-      <div class="hero">
-        <div class="brand">
-          <div class="logoPulse">▲</div>
-          <div>
-            <div class="title neonText">Triangle Dominion</div>
-            <div class="subtitle">Dice-driven line tactics. Claim triangles. Rule the board.</div>
-          </div>
-        </div>
+    <!-- ===== MENU (simple, centered) ===== -->
+    <main v-if="step === 'menu'" class="canvas">
+      <div class="titleText">Triangle Arena</div>
 
-        <div class="legacyMenu neonCard">
-          <div class="legacyTitle neonText">Legacy Menu</div>
+      <img class="logo" src="/images/app-logo.png" alt="Triangle Arena" />
 
-          <button class="btn primary neonBtn big" @click="toBoardSelect">
-            <span class="zap">▶</span> Play
-          </button>
-
-          <button class="btn ghost neonBtn big" @click="openHow">
-            <span class="zap">?</span> How to Play
-          </button>
-
-          <div class="tinyNote">Tip: Choose a board by clicking it. The match starts instantly.</div>
-
-          <!-- ✅ SFX toggle -->
-          <button class="btn ghost neonBtn" style="margin-top: 6px;" @click="toggleSfx">
-            {{ audio.sfxEnabled.value ? '🔊 SFX: On' : '🔇 SFX: Off' }}
-          </button>
-
-          <!-- ✅ BGM toggle -->
-          <button class="btn ghost neonBtn" style="margin-top: 6px;" @click="toggleBgm">
-            {{ audio.bgmEnabled.value ? '🎵 BGM: On' : '🚫🎵 BGM: Off' }}
-          </button>
-        </div>
+      <div class="actions">
+        <button class="btn primary" @click="goToBoardSelect">Play</button>
+        <button class="btn ghost" @click="openHow">How to Play</button>
       </div>
 
-      <div class="footerRow">
-        <div class="pill neonPill">
-          <span class="dot" style="background:#00F0FF; box-shadow: 0 0 18px #00F0FF;"></span>
-          <b>vs AI</b>
-          <span class="muted">— clean geometry, fast turns</span>
-        </div>
+      <div class="soundBar">
+        <button class="chip" :class="{ on: audio.sfxEnabled.value }" @click="toggleSfx">
+          {{ audio.sfxEnabled.value ? '🔊 SFX On' : '🔇 SFX Off' }}
+        </button>
+        <button class="chip" :class="{ on: audio.bgmEnabled.value }" @click="toggleBgm">
+          {{ audio.bgmEnabled.value ? '🎵 BGM On' : '🚫🎵 BGM Off' }}
+        </button>
       </div>
-    </div>
 
-    <!-- BOARD SELECT -->
-    <div v-else class="panel neonCard enter">
-      <div class="topRow">
-        <div>
-          <div class="title neonText">Pick a Board</div>
-          <div class="subtitle">Click any board preview to start instantly.</div>
-        </div>
+      <div class="hint">Press <b>Enter</b> to open boards • <b>ESC</b> to close</div>
+    </main>
 
-        <div class="topActions">
-          <button class="btn ghost neonBtn" @click="openHow">How to Play</button>
-          <button class="btn ghost neonBtn" @click="backToMenu">Back</button>
-
-          <!-- small toggles in header -->
-          <button class="btn ghost neonBtn" @click="toggleSfx">
-            {{ audio.sfxEnabled.value ? '🔊' : '🔇' }}
-          </button>
-          <button class="btn ghost neonBtn" @click="toggleBgm">
-            {{ audio.bgmEnabled.value ? '🎵' : '🚫🎵' }}
-          </button>
-        </div>
+    <!-- ===== BOARD SELECT (after clicking Play) ===== -->
+    <main v-else class="boardCanvas">
+      <div class="boardTop">
+        <div class="boardTitle">Select Board</div>
+        <button class="btn ghost smallBtn" @click="backToMenu">Back</button>
       </div>
 
       <div class="boardGrid">
@@ -408,19 +364,17 @@ const previews = computed<Record<string, Preview>>(() => {
           v-for="p in BOARD_PRESETS"
           :key="p.id"
           class="boardCard"
+          :style="{ '--accent': p.accent, '--glow': p.glow, '--cardbg': p.bg }"
           @mouseenter="audio.playSfx('ui_hover', 0.55)"
-          @click="audio.unlockAudio(); audio.playSfx('ui_click'); goPlay(p.id)"
-          :title="`Play: ${p.name}`"
+          @focus="audio.playSfx('ui_hover', 0.45)"
+          @click="startBoard(p.id)"
         >
           <div class="cardHead">
             <div class="cardName">{{ p.name }}</div>
-            <div class="cardTag">{{ p.tag }}</div>
+            <div class="cardDesc">{{ p.description }}</div>
           </div>
-          <div class="cardDesc">{{ p.description }}</div>
 
           <div class="miniBoard">
-            <div class="miniGlow"></div>
-
             <svg
               v-if="previews[p.id]"
               class="miniSvg"
@@ -428,10 +382,10 @@ const previews = computed<Record<string, Preview>>(() => {
               preserveAspectRatio="xMidYMid meet"
               aria-hidden="true"
             >
-              <g opacity="0.20">
+              <g opacity="0.22">
                 <line
                   v-for="e in previews[p.id].edges"
-                  :key="`pv-${p.id}-${e.key}`"
+                  :key="`e-${p.id}-${e.key}`"
                   :x1="previews[p.id].dots[e.a].x"
                   :y1="previews[p.id].dots[e.a].y"
                   :x2="previews[p.id].dots[e.b].x"
@@ -439,72 +393,81 @@ const previews = computed<Record<string, Preview>>(() => {
                   class="pvEdge"
                 />
               </g>
-
               <g>
-                <circle v-for="d in previews[p.id].dots" :key="`pvd-${p.id}-${d.id}`" :cx="d.x" :cy="d.y" r="7.2" class="pvDot" />
+                <circle
+                  v-for="d in previews[p.id].dots"
+                  :key="`d-${p.id}-${d.id}`"
+                  :cx="d.x"
+                  :cy="d.y"
+                  r="6.6"
+                  class="pvDot"
+                />
               </g>
             </svg>
-
-            <div class="tapHint">
-              <span class="tapDot"></span>
-              <b>Click to Play</b>
-            </div>
           </div>
+
+          <div class="cardFoot">Click to start</div>
         </button>
       </div>
 
-      <div class="tinyNote">
-        Opens <b>/play</b> with <code>?board=&lt;id&gt;&amp;autostart=1</code>.
+      <div class="soundBar boardSound">
+        <button class="chip" :class="{ on: audio.sfxEnabled.value }" @click="toggleSfx">
+          {{ audio.sfxEnabled.value ? '🔊 SFX On' : '🔇 SFX Off' }}
+        </button>
+        <button class="chip" :class="{ on: audio.bgmEnabled.value }" @click="toggleBgm">
+          {{ audio.bgmEnabled.value ? '🎵 BGM On' : '🚫🎵 BGM Off' }}
+        </button>
       </div>
-    </div>
+    </main>
 
-    <!-- HOW TO PLAY MODAL -->
+    <!-- How to Play Modal -->
     <div v-if="showHow" class="modal" @click.self="closeHow">
-      <div class="modalCard neonCard pop">
-        <div class="modalTitle neonText">How to Play</div>
+      <div class="modalCard">
+        <div class="modalTop">
+          <div class="modalTitle">How to Play</div>
+          <button class="xBtn" @click="closeHow" aria-label="Close">✕</button>
+        </div>
 
-        <div class="howGrid">
-          <div class="howStep">
-            <div class="howNum">1</div>
+        <div class="steps">
+          <div class="step">
+            <div class="num">1</div>
             <div>
-              <div class="howHead">Roll the Dice</div>
-              <div class="howText">You roll a D6. The result is how many edges you must draw this turn.</div>
+              <div class="head">Roll the Dice</div>
+              <div class="text">You roll a D6. The result is how many edges you must draw this turn.</div>
             </div>
           </div>
 
-          <div class="howStep">
-            <div class="howNum">2</div>
+          <div class="step">
+            <div class="num">2</div>
             <div>
-              <div class="howHead">Draw Exactly N Edges</div>
-              <div class="howText">Click a dot → neighbors glow → click a neighbor to draw a line. No crossing allowed.</div>
+              <div class="head">Draw Exactly N Edges</div>
+              <div class="text">Click a dot → choose a neighbor → draw a line. No crossing allowed.</div>
             </div>
           </div>
 
-          <div class="howStep">
-            <div class="howNum">3</div>
+          <div class="step">
+            <div class="num">3</div>
             <div>
-              <div class="howHead">Claim Triangles Instantly</div>
-              <div class="howText">When the 3 edges of a triangle exist, it’s claimed immediately and you score +1.</div>
+              <div class="head">Claim Triangles</div>
+              <div class="text">Complete 3 edges of a triangle to claim it instantly and score +1.</div>
             </div>
           </div>
 
-          <div class="howStep">
-            <div class="howNum">4</div>
+          <div class="step">
+            <div class="num">4</div>
             <div>
-              <div class="howHead">Win Condition</div>
-              <div class="howText">Game ends when no legal moves remain. Most triangles wins.</div>
+              <div class="head">Game Ends</div>
+              <div class="text">When no legal moves remain. Highest triangle count wins.</div>
             </div>
           </div>
         </div>
 
         <div class="modalBtns">
-          <button class="btn primary neonBtn" @click="closeHow"><span class="zap">✓</span> Got it</button>
-          <button class="btn ghost neonBtn" @click="closeHow">Close</button>
+          <button class="btn primary" @click="closeHow">Got it</button>
+          <button class="btn ghost" @click="closeHow">Close</button>
         </div>
 
-        <div class="tinyNote" style="margin-top:10px; opacity:.8;">
-          Shortcut: press <b>ESC</b> to close this window.
-        </div>
+        <div class="small">Shortcut: press <b>ESC</b> to close.</div>
       </div>
     </div>
   </div>
@@ -516,207 +479,220 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 
 .wrap{
   min-height: 100vh;
-  color: #fff;
-  padding: 16px;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   position: relative;
   overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: #fff;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   background: #02030a;
 }
 
 /* Background */
-.bgEnergy{ position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
-.bgAurora{ position: absolute; inset: -20%; filter: blur(26px); opacity: 0.8; mix-blend-mode: screen; transform: translateZ(0); }
-.bgAurora.a1{
+.bg{ position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow:hidden; }
+.aurora{ position:absolute; inset:-20%; filter: blur(26px); opacity:0.8; mix-blend-mode: screen; transform: translateZ(0); }
+.aurora.a1{
   background:
-    radial-gradient(900px 620px at 20% 18%, rgba(0,240,255,0.22), transparent 62%),
-    radial-gradient(980px 650px at 82% 62%, rgba(255,61,166,0.18), transparent 64%),
-    radial-gradient(700px 520px at 55% 10%, rgba(120,90,255,0.14), transparent 60%);
-  animation: auroraDrift1 8.5s ease-in-out infinite alternate;
+    radial-gradient(900px 620px at 20% 18%, rgba(0,240,255,0.20), transparent 62%),
+    radial-gradient(980px 650px at 82% 62%, rgba(255,61,166,0.16), transparent 64%),
+    radial-gradient(700px 520px at 55% 10%, rgba(120,90,255,0.12), transparent 60%);
+  animation: drift1 10s ease-in-out infinite alternate;
 }
-.bgAurora.a2{
+.aurora.a2{
   background:
-    radial-gradient(900px 620px at 80% 22%, rgba(120,255,70,0.10), transparent 62%),
-    radial-gradient(900px 620px at 45% 78%, rgba(0,240,255,0.12), transparent 62%),
-    radial-gradient(700px 520px at 16% 70%, rgba(255,61,166,0.10), transparent 60%);
-  animation: auroraDrift2 10.5s ease-in-out infinite alternate;
-  opacity: 0.60;
+    radial-gradient(900px 620px at 75% 22%, rgba(120,255,70,0.08), transparent 62%),
+    radial-gradient(900px 620px at 40% 78%, rgba(0,240,255,0.10), transparent 62%),
+    radial-gradient(700px 520px at 18% 70%, rgba(255,61,166,0.09), transparent 60%);
+  animation: drift2 12s ease-in-out infinite alternate;
+  opacity: 0.55;
 }
-.bgAurora.a3{
-  background: conic-gradient(from 180deg at 50% 50%,
-    rgba(0,240,255,0.10),
-    rgba(255,61,166,0.10),
-    rgba(120,90,255,0.10),
-    rgba(120,255,70,0.08),
-    rgba(0,240,255,0.10)
-  );
-  animation: auroraSpin 14s linear infinite;
-  opacity: 0.45;
-}
-@keyframes auroraDrift1{ from{ transform: translate(-2%, -1%) scale(1.02) rotate(-2deg); } to{ transform: translate(2%, 1%) scale(1.06) rotate(2deg); } }
-@keyframes auroraDrift2{ from{ transform: translate(2%, -2%) scale(1.02) rotate(3deg); } to{ transform: translate(-2%, 2%) scale(1.08) rotate(-3deg); } }
-@keyframes auroraSpin{ from{ transform: rotate(0deg) scale(1.12); } to{ transform: rotate(360deg) scale(1.12); } }
+@keyframes drift1{ from{ transform: translate(-2%,-1%) scale(1.03); } to{ transform: translate(2%,1%) scale(1.07); } }
+@keyframes drift2{ from{ transform: translate(2%,-2%) scale(1.02); } to{ transform: translate(-2%,2%) scale(1.08); } }
 
-.bgGrid{
-  position:absolute; inset: 0; opacity: 0.12;
+.grid{
+  position:absolute; inset:0; opacity:0.11;
   background:
     linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px);
-  background-size: 48px 48px;
+  background-size: 54px 54px;
   mask-image: radial-gradient(closest-side at 50% 45%, rgba(0,0,0,1), rgba(0,0,0,0));
   animation: gridSlide 10s linear infinite;
 }
-@keyframes gridSlide{ from{ transform: translate3d(0,0,0); } to{ transform: translate3d(-48px,-48px,0); } }
+@keyframes gridSlide{ from{ transform: translate3d(0,0,0);} to{ transform: translate3d(-54px,-54px,0);} }
 
-.bgSparks{
-  position:absolute; inset: 0; opacity: 0.65;
-  background:
-    radial-gradient(2px 2px at 20% 30%, rgba(0,240,255,0.9), transparent 60%),
-    radial-gradient(2px 2px at 35% 80%, rgba(255,61,166,0.9), transparent 60%),
-    radial-gradient(2px 2px at 70% 40%, rgba(120,255,70,0.7), transparent 60%),
-    radial-gradient(2px 2px at 85% 70%, rgba(120,90,255,0.9), transparent 60%),
-    radial-gradient(2px 2px at 55% 15%, rgba(0,240,255,0.7), transparent 60%);
-  filter: blur(0.2px);
-  animation: sparksFloat 3.6s ease-in-out infinite alternate;
-}
-@keyframes sparksFloat{ from{ transform: translateY(0px) translateX(0px); opacity: 0.50; } to{ transform: translateY(-10px) translateX(8px); opacity: 0.80; } }
-
-.wrap > *{ position: relative; z-index: 1; }
-.enter{ animation: riseIn 420ms ease-out both; }
-@keyframes riseIn{ from{ transform: translateY(12px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
-
-/* cards */
-.neonCard{
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(255,255,255,0.06);
-  border-radius: 18px;
-  box-shadow:
-    0 0 0 1px rgba(0,240,255,0.14),
-    0 0 54px rgba(0,240,255,0.10),
-    0 0 46px rgba(255,61,166,0.08),
-    inset 0 0 26px rgba(0,0,0,0.44);
-  backdrop-filter: blur(12px);
-  overflow: hidden;
-}
-.neonText{ text-shadow: 0 0 18px rgba(0,240,255,0.34), 0 0 28px rgba(255,61,166,0.16); }
-
-.panel{ max-width: 1100px; margin: 32px auto; padding: 18px; }
-.title{ font-size: 34px; font-weight: 950; letter-spacing: -0.02em; }
-.subtitle{ margin-top: 8px; opacity: 0.88; }
-
-.hero{ display:grid; grid-template-columns: 1.15fr 0.85fr; gap: 12px; align-items: stretch; }
-@media (max-width: 980px){ .hero{ grid-template-columns: 1fr; } }
-
-.brand{ display:flex; gap: 14px; align-items:center; padding: 18px; }
-.logoPulse{
-  width: 62px; height: 62px; border-radius: 18px;
-  display:grid; place-items:center;
-  border: 1px solid rgba(0,240,255,0.28);
-  background: rgba(0,240,255,0.10);
-  box-shadow: 0 0 30px rgba(0,240,255,0.14);
-  font-size: 26px; font-weight: 1000;
-  animation: logoBreath 2.2s ease-in-out infinite;
-}
-@keyframes logoBreath{
-  0%,100%{ transform: translateY(0) scale(1); filter: brightness(1); }
-  50%{ transform: translateY(-2px) scale(1.03); filter: brightness(1.14); }
+.vignette{
+  position:absolute; inset:-10%;
+  background: radial-gradient(closest-side at 50% 30%, rgba(0,0,0,0), rgba(0,0,0,0.55) 72%, rgba(0,0,0,0.75));
 }
 
-.legacyMenu{ padding: 14px; display:flex; flex-direction: column; gap: 10px; justify-content:center; }
-.legacyTitle{ font-size: 16px; font-weight: 950; opacity: 0.95; }
-
-.footerRow{ display:flex; align-items:center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
-.miniLink{ color: rgba(255,255,255,0.88); text-decoration: none; opacity: 0.88; }
-.miniLink:hover{ opacity: 1; text-decoration: underline; }
-
-.pill{
-  padding: 8px 10px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
-  border-radius: 999px;
-  font-size: 13px;
-  display:inline-flex;
-  gap: 8px;
-  align-items:center;
+/* ===== Menu canvas (simple centered) ===== */
+.canvas{
+  z-index: 1;
+  width: min(520px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  padding: 10px 8px;
 }
-.neonPill{ box-shadow: 0 0 18px rgba(0,240,255,0.08); }
-.muted{ opacity: 0.7; }
-.dot{ width: 12px; height: 12px; border-radius: 999px; display:inline-block; }
+
+.titleText{
+  font-size: 34px;
+  font-weight: 1000;
+  letter-spacing: -0.03em;
+  text-shadow: 0 0 18px rgba(0,240,255,0.22), 0 0 20px rgba(255,61,166,0.10);
+}
+
+.logo{
+  width: min(220px, 62vw);
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 22px rgba(0,240,255,0.22)) drop-shadow(0 0 18px rgba(255,61,166,0.10));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* buttons less wide */
+.actions{
+  width: 100%;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+.actions .btn{ width: min(320px, 86%); }
 
 .btn{
   border: 1px solid rgba(255,255,255,0.18);
   background: rgba(255,255,255,0.10);
   color: #fff;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
   cursor: pointer;
-  font-weight: 950;
-  transition: transform 120ms ease, box-shadow 160ms ease, background 160ms ease, filter 160ms ease;
+  font-weight: 900;
+  font-size: 15px;
+  transition: transform 120ms ease, background 160ms ease, box-shadow 160ms ease, filter 160ms ease;
 }
-.btn:hover{ background: rgba(255,255,255,0.14); transform: translateY(-1px); filter: brightness(1.05); }
+.btn:hover{
+  background: rgba(255,255,255,0.14);
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 0 0 1px rgba(0,240,255,0.10), 0 0 22px rgba(0,240,255,0.08);
+}
 .btn:active{ transform: translateY(0) scale(0.99); }
-.btn.ghost{ background: transparent; }
-.btn.primary{ background: rgba(0,240,255,0.16); border-color: rgba(0,240,255,0.34); }
-.neonBtn{ box-shadow: 0 0 0 1px rgba(0,240,255,0.12), 0 0 18px rgba(0,240,255,0.12), 0 0 16px rgba(255,61,166,0.08); }
-.btn.big{ padding: 12px 14px; border-radius: 14px; font-size: 14px; }
-.zap{ filter: drop-shadow(0 0 12px rgba(0,240,255,0.34)); }
+.btn.primary{
+  background:
+    radial-gradient(900px 420px at 20% 20%, rgba(0,240,255,0.22), transparent 62%),
+    linear-gradient(180deg, rgba(0,240,255,0.18), rgba(255,61,166,0.10));
+  border-color: rgba(0,240,255,0.32);
+}
+.btn.ghost{ background: rgba(0,0,0,0.16); }
+.btn.smallBtn{ padding: 10px 12px; font-size: 14px; border-radius: 12px; }
 
-.topRow{ display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.topActions{ display:flex; gap: 10px; flex-wrap: wrap; }
+.soundBar{
+  margin-top: 10px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 420px){
+  .soundBar{ grid-template-columns: 1fr; }
+}
+
+.chip{
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.22);
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 900;
+  font-size: 13px;
+  transition: transform 120ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.chip:hover{ transform: translateY(-1px); background: rgba(255,255,255,0.08); }
+.chip.on{
+  border-color: rgba(0,240,255,0.26);
+  box-shadow: 0 0 0 1px rgba(0,240,255,0.10), 0 0 20px rgba(0,240,255,0.10);
+}
+
+.hint{
+  margin-top: 2px;
+  font-size: 12px;
+  opacity: 0.78;
+}
+
+/* ===== Board select canvas ===== */
+.boardCanvas{
+  z-index: 1;
+  width: min(920px, 96vw);
+  display:flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.boardTop{
+  width: 100%;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 4px;
+}
+.boardTitle{
+  font-size: 22px;
+  font-weight: 1000;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 18px rgba(0,240,255,0.18);
+}
 
 .boardGrid{
-  margin-top: 12px;
+  width: 100%;
   display:grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
-@media (max-width: 980px){ .boardGrid{ grid-template-columns: 1fr; } }
+@media (max-width: 980px){
+  .boardGrid{ grid-template-columns: 1fr; }
+}
 
 .boardCard{
-  text-align:left;
-  border-radius: 14px;
+  --accent: #00F0FF;
+  --glow: rgba(0,240,255,0.30);
+  --cardbg: radial-gradient(800px 360px at 25% 20%, rgba(0,240,255,0.18), transparent 62%);
+
   border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
-  color: #fff;
+  background: var(--cardbg), rgba(255,255,255,0.06);
+  border-radius: 16px;
   padding: 12px;
-  cursor: pointer;
-  transition: transform 140ms ease, box-shadow 180ms ease, background 180ms ease, filter 180ms ease;
-  display:flex; flex-direction: column; gap: 10px;
+  color: #fff;
+  cursor:pointer;
+  display:flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: transform 140ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 .boardCard:hover{
   transform: translateY(-1px);
-  background: rgba(255,255,255,0.09);
-  box-shadow: 0 0 0 1px rgba(0,240,255,0.14), 0 0 26px rgba(0,240,255,0.10);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 28px var(--glow);
+  filter: brightness(1.03);
 }
-.boardCard:active{ transform: translateY(0) scale(0.995); filter: brightness(1.03); }
 
-.cardHead{ display:flex; align-items:center; justify-content: space-between; gap: 10px; }
-.cardName{ font-weight: 950; }
-.cardTag{ font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.24); opacity: 0.9; }
+.cardHead{ display:flex; flex-direction: column; gap: 2px; text-align:left; }
+.cardName{ font-weight: 1000; letter-spacing:-0.01em; }
 .cardDesc{ font-size: 12px; opacity: 0.84; }
 
 .miniBoard{
-  position: relative;
-  border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.10);
-  background:
-    radial-gradient(520px 220px at 30% 30%, rgba(0,240,255,0.14), transparent 60%),
-    radial-gradient(520px 220px at 70% 70%, rgba(255,61,166,0.10), transparent 62%),
-    rgba(0,0,0,0.34);
-  overflow: hidden;
+  background: rgba(0,0,0,0.26);
+  border-radius: 14px;
+  overflow:hidden;
   padding: 10px;
 }
-.miniGlow{
-  position:absolute; inset:-30%;
-  background: radial-gradient(closest-side, rgba(0,240,255,0.10), transparent 65%);
-  filter: blur(22px);
-  opacity: 0.8;
-  animation: miniGlow 5.5s ease-in-out infinite alternate;
-}
-@keyframes miniGlow{ from{ transform: translate(-1%, -1%) scale(1.02); } to{ transform: translate(2%, 2%) scale(1.06); } }
-
-.miniSvg{ position: relative; width: 100%; height: 160px; display:block; }
-
+.miniSvg{ width: 100%; height: 150px; display:block; }
 .pvEdge{
   stroke: rgba(240,250,255,0.55);
   stroke-width: 3.0;
@@ -725,56 +701,96 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   animation: pvFlow 3.2s linear infinite;
 }
 @keyframes pvFlow{ from{ stroke-dashoffset: 0; } to{ stroke-dashoffset: -64; } }
-
 .pvDot{
-  fill: rgba(255,255,255,0.90);
-  stroke: rgba(0,0,0,0.76);
+  fill: rgba(255,255,255,0.92);
+  stroke: rgba(0,0,0,0.75);
   stroke-width: 2;
-  filter: drop-shadow(0 0 10px rgba(0,240,255,0.16));
 }
 
-.tapHint{
-  position:absolute; right: 10px; bottom: 10px;
-  display:flex; gap: 8px; align-items:center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.26);
+.cardFoot{
   font-size: 12px;
-  opacity: 0.92;
+  opacity: 0.78;
+  text-align:left;
 }
-.tapDot{
-  width: 10px; height: 10px; border-radius: 999px;
-  background: #00F0FF; box-shadow: 0 0 16px rgba(0,240,255,0.52);
-  animation: tapPulse 1.2s ease-in-out infinite;
+.boardSound{ margin-top: 6px; }
+
+/* ===== Modal ===== */
+.modal{
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.62);
+  display: grid; place-items: center;
+  padding: 16px;
+  z-index: 50;
 }
-@keyframes tapPulse{ 0%,100%{ transform: scale(1); opacity: 0.75; } 50%{ transform: scale(1.25); opacity: 1; } }
+.modalCard{
+  width: min(680px, 94vw);
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 0 1px rgba(0,240,255,0.12), 0 0 40px rgba(0,240,255,0.10);
+  padding: 16px;
+  color: #fff;
+}
+.modalTop{ display:flex; align-items:center; justify-content: space-between; gap: 10px; }
+.modalTitle{ font-size: 18px; font-weight: 1000; }
+.xBtn{
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.26);
+  color:#fff;
+  cursor:pointer;
+  font-weight: 1000;
+  transition: transform 120ms ease, background 160ms ease;
+}
+.xBtn:hover{ transform: translateY(-1px); background: rgba(255,255,255,0.08); }
+.xBtn:active{ transform: translateY(0) scale(0.99); }
 
-.tinyNote{ margin-top: 10px; font-size: 12px; opacity: 0.82; }
-code{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-
-/* Modal */
-.modal{ position: fixed; inset: 0; background: rgba(0,0,0,0.62); display: grid; place-items: center; padding: 16px; z-index: 50; }
-.modalCard{ width: min(680px, 100%); padding: 16px; border-radius: 18px; }
-.pop{ animation: popIn 240ms ease-out both; }
-@keyframes popIn{ from{ transform: scale(0.96); opacity: 0; } to{ transform: scale(1); opacity: 1; } }
-.modalTitle{ font-size: 20px; font-weight: 1000; }
-.modalBtns{ display:flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
-
-.howGrid{ margin-top: 12px; display:grid; gap: 10px; }
-.howStep{
+.steps{ margin-top: 12px; display:grid; gap: 10px; }
+.step{
   display:flex; gap: 10px; align-items:flex-start;
-  padding: 12px; border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.05);
+  background: rgba(0,0,0,0.18);
+  border-radius: 14px;
+  padding: 12px;
 }
-.howNum{
-  width: 28px; height: 28px; border-radius: 10px;
+.num{
+  width: 28px; height: 28px;
+  border-radius: 10px;
   display:grid; place-items:center;
   border: 1px solid rgba(0,240,255,0.26);
   background: rgba(0,240,255,0.10);
-  font-weight: 950;
+  font-weight: 1000;
 }
-.howHead{ font-weight: 950; }
-.howText{ margin-top: 4px; font-size: 12px; opacity: 0.88; }
+.head{ font-weight: 1000; }
+.text{ margin-top: 4px; font-size: 12px; opacity: 0.86; line-height: 1.45; }
+
+.modalBtns{ margin-top: 14px; display:flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.small{ margin-top: 10px; font-size: 12px; opacity: 0.78; }
+.iconWall{
+  position: absolute;
+  inset: 0;
+  background-image: url('/images/triangle-arena-app-icon.png');
+  background-repeat: no-repeat;
+  background-position: 50% 40%;
+  background-size: cover;
+  opacity: 0.16;               /* tweak: 0.10 - 0.22 */
+  filter: saturate(1.05) contrast(1.05);
+  transform: translateZ(0);
+}
+
+.topShade{
+  position: absolute;
+  inset: 0;
+  /* black shade on top */
+  background: linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.92) 0%,
+    rgba(0,0,0,0.55) 22%,
+    rgba(0,0,0,0.18) 52%,
+    rgba(0,0,0,0.00) 80%
+  );
+  pointer-events: none;
+}
 </style>

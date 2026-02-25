@@ -1,18 +1,14 @@
 <!-- app/pages/play.vue -->
 <script setup lang="ts">
-useHead({ title: 'Triangle Dominion — vs AI' })
+useHead({ title: 'Triangle Arena — vs AI' })
 
 /* =========================================================
    AUDIO (game bgm + sfx everywhere)
-   ✅ Requires updated useAudioFx() with:
-      - sfxEnabled, bgmEnabled
-      - setSfxEnabled(), setBgmEnabled()
 ========================================================= */
 const audio = useAudioFx()
 
 onMounted(() => {
   audio.initAudio()
-  // game music (will start after first user gesture if autoplay blocked)
   void audio.playBgm('bgm_game')
 })
 
@@ -142,7 +138,6 @@ function makeTriField(opts?: { rows?: number; cols?: number; spacing?: number; m
   const maxY = Math.max(...full.map((d) => d.y)) + m
   return { dots: full, width: maxX, height: maxY, rows, cols, spacing: s, margin: m }
 }
-
 type RawFieldDot = ReturnType<typeof makeTriField>['dots'][number]
 
 function remapFilteredBoard(field: ReturnType<typeof makeTriField>, keep: (d: RawFieldDot) => boolean) {
@@ -217,6 +212,7 @@ function polygonMask(field: ReturnType<typeof makeTriField>, sides: number, radi
   return remapFilteredBoard(field, (d) => inside(d.x, d.y))
 }
 
+/* presets */
 function presetCircle() {
   const field = makeTriField({ rows: 13, cols: 15, spacing: 52, margin: 86 })
   const dots = field.dots
@@ -251,21 +247,88 @@ function presetHexagon() {
   return polygonMask(field, 6, 0.88, Math.PI / 6)
 }
 
+/* =========================================================
+   BOARD PRESETS (must match index.vue colors)
+========================================================= */
 type BoardPreset = {
   id: string
   name: string
   tag: 'Shape'
   description: string
   build: () => { dots: Dot[]; width: number; height: number }
+  accent: string
+  glow: string
+  bg: string
+  chip: string
 }
 
 const BOARD_PRESETS: BoardPreset[] = [
-  { id: 'circle', name: 'Bubble Arena', tag: 'Shape', description: 'Round and bouncy. Easy to read, fun to combo.', build: presetCircle },
-  { id: 'triangle', name: 'Tri Peak', tag: 'Shape', description: 'Sharp corners, quick fights, fast endings.', build: presetTriangle },
-  { id: 'square', name: 'Pixel Square', tag: 'Shape', description: 'Classic grid-ish feel, balanced edges.', build: presetSquare },
-  { id: 'rectangle', name: 'Neon Strip', tag: 'Shape', description: 'Long arena—make chain captures!', build: presetRectangle },
-  { id: 'pentagon', name: 'Pentagon Park', tag: 'Shape', description: 'Weird angles = playful tactics.', build: presetPentagon },
-  { id: 'hexagon', name: 'Hex Hive', tag: 'Shape', description: 'Lots of options, high triangle potential.', build: presetHexagon }
+  {
+    id: 'circle',
+    name: 'Bubble Arena',
+    tag: 'Shape',
+    description: 'Round and bouncy.',
+    build: presetCircle,
+    accent: '#00F0FF',
+    glow: 'rgba(0,240,255,0.32)',
+    bg: 'radial-gradient(900px 420px at 20% 20%, rgba(0,240,255,0.22), transparent 62%), radial-gradient(700px 320px at 75% 70%, rgba(120,90,255,0.14), transparent 62%)',
+    chip: 'rgba(0,240,255,0.14)'
+  },
+  {
+    id: 'triangle',
+    name: 'Tri Peak',
+    tag: 'Shape',
+    description: 'Sharp corners, quick fights.',
+    build: presetTriangle,
+    accent: '#FF3DA6',
+    glow: 'rgba(255,61,166,0.30)',
+    bg: 'radial-gradient(900px 420px at 20% 20%, rgba(255,61,166,0.22), transparent 62%), radial-gradient(700px 320px at 80% 70%, rgba(255,190,0,0.12), transparent 62%)',
+    chip: 'rgba(255,61,166,0.14)'
+  },
+  {
+    id: 'square',
+    name: 'Pixel Square',
+    tag: 'Shape',
+    description: 'Balanced grid feel.',
+    build: presetSquare,
+    accent: '#7BFF46',
+    glow: 'rgba(123,255,70,0.26)',
+    bg: 'radial-gradient(900px 420px at 20% 20%, rgba(123,255,70,0.18), transparent 62%), radial-gradient(700px 320px at 78% 72%, rgba(0,240,255,0.12), transparent 62%)',
+    chip: 'rgba(123,255,70,0.14)'
+  },
+  {
+    id: 'rectangle',
+    name: 'Neon Strip',
+    tag: 'Shape',
+    description: 'Long arena lines.',
+    build: presetRectangle,
+    accent: '#7C5AFF',
+    glow: 'rgba(124,90,255,0.30)',
+    bg: 'radial-gradient(900px 420px at 18% 20%, rgba(124,90,255,0.22), transparent 62%), radial-gradient(700px 320px at 78% 72%, rgba(255,61,166,0.12), transparent 62%)',
+    chip: 'rgba(124,90,255,0.14)'
+  },
+  {
+    id: 'pentagon',
+    name: 'Pentagon Park',
+    tag: 'Shape',
+    description: 'Playful angles.',
+    build: presetPentagon,
+    accent: '#FFBE00',
+    glow: 'rgba(255,190,0,0.28)',
+    bg: 'radial-gradient(900px 420px at 20% 20%, rgba(255,190,0,0.20), transparent 62%), radial-gradient(700px 320px at 80% 70%, rgba(0,240,255,0.10), transparent 62%)',
+    chip: 'rgba(255,190,0,0.14)'
+  },
+  {
+    id: 'hexagon',
+    name: 'Hex Hive',
+    tag: 'Shape',
+    description: 'Many options.',
+    build: presetHexagon,
+    accent: '#FF6B6B',
+    glow: 'rgba(255,107,107,0.26)',
+    bg: 'radial-gradient(900px 420px at 20% 20%, rgba(255,107,107,0.18), transparent 62%), radial-gradient(700px 320px at 80% 70%, rgba(124,90,255,0.12), transparent 62%)',
+    chip: 'rgba(255,107,107,0.14)'
+  }
 ]
 
 /* =========================================================
@@ -282,6 +345,7 @@ const dotsById = computed(() => {
   for (const d of board.value.dots) m.set(d.id, d)
   return m
 })
+const selectedPreset = computed(() => BOARD_PRESETS.find((p) => p.id === selectedBoardId.value) ?? BOARD_PRESETS[0])
 
 /* =========================================================
    PHASE / PLAYERS
@@ -382,6 +446,11 @@ function addEdge(a: number, b: number) {
     owner: currentPlayer.value?.id ?? 0
   })
   return true
+}
+function removeEdgeKey(key: EdgeKey) {
+  if (!edgeSet.value.has(key)) return
+  edgeSet.value.delete(key)
+  edges.value = edges.value.filter((e) => e.key !== key)
 }
 
 /* =========================================================
@@ -495,26 +564,6 @@ watch(
   { immediate: true }
 )
 
-const recentClaimIds = ref(new Set<string>())
-function markClaim(tid: string) {
-  recentClaimIds.value.add(tid)
-  recentClaimIds.value = new Set(recentClaimIds.value)
-  window.setTimeout(() => {
-    recentClaimIds.value.delete(tid)
-    recentClaimIds.value = new Set(recentClaimIds.value)
-  }, 520)
-}
-
-const recentEdgeKeys = ref(new Set<EdgeKey>())
-function markEdge(key: EdgeKey) {
-  recentEdgeKeys.value.add(key)
-  recentEdgeKeys.value = new Set(recentEdgeKeys.value)
-  window.setTimeout(() => {
-    recentEdgeKeys.value.delete(key)
-    recentEdgeKeys.value = new Set(recentEdgeKeys.value)
-  }, 520)
-}
-
 function claimTrianglesForEdge(edgeKey: EdgeKey) {
   const list = triByEdge.value.get(edgeKey) ?? []
   let claimed = 0
@@ -526,7 +575,6 @@ function claimTrianglesForEdge(edgeKey: EdgeKey) {
       t.claimedAt = performance.now()
       currentPlayer.value.score += 1
       claimed++
-      markClaim(t.id)
     }
   }
   return claimed
@@ -559,12 +607,6 @@ function allPotentialNeighborEdges(): Move[] {
 }
 const allEdgesOnce = computed(() => allPotentialNeighborEdges())
 
-const moveByKey = computed(() => {
-  const m = new Map<EdgeKey, Move>()
-  for (const mv of allEdgesOnce.value) m.set(mv.key, mv)
-  return m
-})
-
 function isLegalMove(a: number, b: number) {
   if (hasEdge(a, b)) return false
   const da = dotsById.value.get(a)
@@ -572,20 +614,65 @@ function isLegalMove(a: number, b: number) {
   if (wouldCrossExistingEdge(a, b)) return false
   return true
 }
-
 function legalMovesList(): Move[] {
   const legal: Move[] = []
   for (const m of allEdgesOnce.value) if (isLegalMove(m.a, m.b)) legal.push(m)
   return legal
 }
-
-/** ✅ How many valid edges are left on the whole board right now */
 const remainingLegalMovesCount = computed(() => legalMovesList().length)
 
 function hasAnyLegalMove() {
   return remainingLegalMovesCount.value > 0
 }
 
+/* =========================================================
+   CRITICAL FIX:
+   Dice should never give a number you cannot actually finish
+   in the SAME TURN.
+
+   remainingLegalMovesCount can be misleading because after you
+   draw one edge, crossings may remove all other options.
+
+   We estimate the maximum drawable edges in one turn by running
+   multiple random simulations (up to 6 steps).
+========================================================= */
+function estimateMaxDrawableThisTurn(maxDepth = 6, tries = 90): number {
+  const baseLegal = legalMovesList()
+  if (!baseLegal.length) return 0
+  const depthCap = Math.min(maxDepth, baseLegal.length)
+  let best = 1
+
+  // keep it fast
+  const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)]
+
+  for (let t = 0; t < tries; t++) {
+    // store added keys so we can revert quickly
+    const addedKeys: EdgeKey[] = []
+    let count = 0
+
+    for (let step = 0; step < depthCap; step++) {
+      const legal = legalMovesList()
+      if (!legal.length) break
+      const m = pick(legal)
+      // place
+      addEdge(m.a, m.b)
+      addedKeys.push(m.key)
+      count++
+      if (count > best) best = count
+      if (best >= depthCap) break
+    }
+
+    // revert simulation edges (do NOT affect scoring/triangles)
+    for (let i = addedKeys.length - 1; i >= 0; i--) removeEdgeKey(addedKeys[i])
+    // also revert potential triangle claims (none were applied; addEdge only touched edges)
+  }
+
+  return best
+}
+
+/* =========================================================
+   GAME OVER CHECK
+========================================================= */
 function endGameIfNoMoves() {
   if (!hasAnyLegalMove()) {
     phase.value = 'gameover'
@@ -608,16 +695,13 @@ const canRoll = computed(() => {
 })
 
 /**
- * ✅ IMPORTANT RULE YOU ASKED:
- * Dice must NEVER give a number greater than the remaining legal moves.
- * - If remaining moves = 0 => game over immediately.
- * - Else roll between 1..min(6, remainingMoves)
+ * ✅ IMPORTANT RULE (fixed properly):
+ * Dice never gives > maximum drawable edges this turn.
  */
 async function rollDice() {
   if (phase.value !== 'playing') return
   if (rolled.value != null && linesLeft.value > 0) return
 
-  // if no moves, end immediately
   if (remainingLegalMovesCount.value <= 0) {
     endGameIfNoMoves()
     return
@@ -626,7 +710,16 @@ async function rollDice() {
   audio.unlockAudio()
   audio.playSfx('dice_roll')
 
-  const cap = Math.min(6, remainingLegalMovesCount.value)
+  // cap by what is ACTUALLY possible to finish in one turn
+  const feasible = estimateMaxDrawableThisTurn(6, 90)
+  const cap = Math.min(6, feasible)
+
+  if (cap <= 0) {
+    await animateDiceTo(1)
+    endGameIfNoMoves()
+    return
+  }
+
   const n = Math.floor(Math.random() * cap) + 1
 
   await animateDiceTo(n)
@@ -636,7 +729,6 @@ async function rollDice() {
   selectedDotId.value = null
   flash(`${currentPlayer.value.name}`)
 
-  // if AI, start acting
   if (currentPlayer.value.isAI) void aiPlayTurn()
 }
 
@@ -665,17 +757,15 @@ async function endTurn() {
    SELECTION + CLICK CONNECT
 ========================================================= */
 const selectedDotId = ref<number | null>(null)
-const selectedDot = computed(() =>
-  selectedDotId.value == null ? null : dotsById.value.get(selectedDotId.value) || null
-)
+const selectedDot = computed(() => (selectedDotId.value == null ? null : dotsById.value.get(selectedDotId.value) || null))
 
-/** ✅ Only highlight neighbors that are actually eligible to connect right now */
 const eligibleNeighborIds = computed(() => {
   const s = new Set<number>()
   if (phase.value !== 'playing') return s
   if (!selectedDot.value) return s
   if (currentPlayer.value?.isAI) return s
-  if (rolled.value == null || linesLeft.value <= 0) return s // no drawing yet
+  if (rolled.value == null || linesLeft.value <= 0) return s
+
   const a = selectedDot.value.id
   for (const n of selectedDot.value.neighbors) {
     if (isLegalMove(a, n)) s.add(n)
@@ -687,7 +777,6 @@ function onDotClick(id: number) {
   if (phase.value !== 'playing') return
   if (currentPlayer.value.isAI) return
 
-  // ✅ if there are truly no moves, end now (even if player still had linesLeft)
   if (!hasAnyLegalMove()) {
     endGameIfNoMoves()
     return
@@ -695,14 +784,14 @@ function onDotClick(id: number) {
 
   audio.unlockAudio()
 
-  // No roll yet: just selection
+  // before roll: just selecting a dot
   if (rolled.value == null || linesLeft.value <= 0) {
     selectedDotId.value = selectedDotId.value === id ? null : id
     audio.playSfx('dot_select', 0.75)
     return
   }
 
-  // first click after roll: select
+  // first click after roll: pick starting dot
   if (selectedDotId.value == null) {
     selectedDotId.value = id
     audio.playSfx('dot_select', 0.75)
@@ -746,8 +835,6 @@ function onDotClick(id: number) {
   audio.playSfx('edge_draw')
 
   const key = makeEdgeKey(a, b)
-  markEdge(key)
-
   linesLeft.value = Math.max(0, linesLeft.value - 1)
 
   const got = claimTrianglesForEdge(key)
@@ -758,7 +845,7 @@ function onDotClick(id: number) {
 
   selectedDotId.value = b
 
-  // ✅ If no legal moves remain after drawing, game ends immediately (even if linesLeft > 0)
+  // if the board is stuck now, game ends immediately (even if linesLeft > 0)
   if (!hasAnyLegalMove()) {
     endGameIfNoMoves()
     return
@@ -770,6 +857,12 @@ function onDotClick(id: number) {
 /* =========================================================
    AI
 ========================================================= */
+const moveByKey = computed(() => {
+  const m = new Map<EdgeKey, Move>()
+  for (const mv of allEdgesOnce.value) m.set(mv.key, mv)
+  return m
+})
+
 function edgeCenterBonus(a: number, b: number) {
   const A = dotsById.value.get(a)!
   const B = dotsById.value.get(b)!
@@ -845,13 +938,7 @@ function pickAIMoveWise(linesRemaining: number): Move | null {
 
     const center = edgeCenterBonus(m.a, m.b)
 
-    const score =
-      immediate * 5200 +
-      setup * setupWeight -
-      danger * dangerWeight -
-      oppBest * oppWeight +
-      center * 26 +
-      Math.random() * 0.18
+    const score = immediate * 5200 + setup * setupWeight - danger * dangerWeight - oppBest * oppWeight + center * 26 + Math.random() * 0.18
 
     if (score > bestScore + 1e-9) {
       bestScore = score
@@ -879,7 +966,6 @@ async function aiPlayTurn() {
     }
 
     addEdge(move.a, move.b)
-    markEdge(move.key)
     audio.playSfx('ai_move', 0.55)
 
     linesLeft.value = Math.max(0, linesLeft.value - 1)
@@ -890,7 +976,6 @@ async function aiPlayTurn() {
 
     if (got > 0) flash(`🤖 +${got}`)
 
-    // ✅ if board is locked after this move, end immediately
     if (!hasAnyLegalMove()) {
       endGameIfNoMoves()
       return
@@ -905,7 +990,7 @@ async function aiPlayTurn() {
 }
 
 /* =========================================================
-   SETUP / RESET / SHAPE LOAD
+   SETUP / RESET / LOAD
 ========================================================= */
 function hardResetState() {
   edges.value = []
@@ -945,7 +1030,6 @@ function startGame() {
 function resetMatch() {
   audio.unlockAudio()
   audio.playSfx('ui_click')
-
   hardResetState()
   phase.value = 'playing'
 }
@@ -977,34 +1061,12 @@ function edgeStroke(e: Edge) {
   return p?.color ?? 'rgba(240,250,255,0.92)'
 }
 const canRollTitle = computed(() => (canRoll.value ? 'Roll' : ''))
-const selectedPreset = computed(() => BOARD_PRESETS.find((p) => p.id === selectedBoardId.value) ?? BOARD_PRESETS[0])
-
-/* confetti */
-const confettiBursts = ref<Array<{ id: number; x: number; y: number; t: number; color: string }>>([])
-let confId = 1
-function confettiAtTriangle(t: Triangle) {
-  const a = dotsById.value.get(t.a)!
-  const b = dotsById.value.get(t.b)!
-  const c = dotsById.value.get(t.c)!
-  const x = (a.x + b.x + c.x) / 3
-  const y = (a.y + b.y + c.y) / 3
-  const color = playerById(t.owner)?.color ?? '#ffffff'
-  const thisId = confId++
-  confettiBursts.value.push({ id: thisId, x, y, t: performance.now(), color })
-  if (confettiBursts.value.length > 14) confettiBursts.value.splice(0, confettiBursts.value.length - 14)
-  window.setTimeout(() => {
-    confettiBursts.value = confettiBursts.value.filter((c) => c.id !== thisId)
-  }, 650)
-}
-watch(
-  () => Array.from(recentClaimIds.value),
-  () => {
-    for (const tid of recentClaimIds.value) {
-      const t = triangles.value.find((x) => x.id === tid)
-      if (t?.owner != null) confettiAtTriangle(t)
-    }
-  }
-)
+const themeVars = computed(() => ({
+  '--accent': selectedPreset.value.accent,
+  '--glow': selectedPreset.value.glow,
+  '--cardbg': selectedPreset.value.bg,
+  '--chip': selectedPreset.value.chip
+}))
 
 /* =========================================================
    ROUTE INTEGRATION
@@ -1014,16 +1076,15 @@ onMounted(() => {
   const boardId = String(route.query.board ?? '')
   if (boardId) loadBoard(boardId)
 
-  if (String(route.query.autostart ?? '') === '1') {
-    startGame()
-  }
+  if (String(route.query.autostart ?? '') === '1') startGame()
 })
 </script>
 
 <template>
-  <div class="wrap" @pointerdown="audio.unlockAudio()">
-    <!-- background -->
-    <div class="bgEnergy">
+  <div class="wrap" :style="themeVars" @pointerdown="audio.unlockAudio()">
+    <!-- background (tinted by selected board) -->
+    <div class="bgEnergy" aria-hidden="true">
+      <div class="bgTint" :style="{ background: selectedPreset.bg }"></div>
       <div class="bgAurora a1"></div>
       <div class="bgAurora a2"></div>
       <div class="bgAurora a3"></div>
@@ -1034,24 +1095,26 @@ onMounted(() => {
     <!-- SETUP -->
     <div v-if="phase === 'setup'" class="panel neonCard enter">
       <div class="title neonText">
-        Triangle Dominion
+        Triangle Arena
         <span class="modeTag">vs AI</span>
       </div>
-      <div class="subtitle">Choose a shape board and start playing.</div>
+      <div class="subtitle">Choose a board and start.</div>
 
       <div class="setupGrid">
         <div class="boardPicker neonCard">
           <div class="pickerTitle">
-            <div class="pickerLabel neonText">Shapes</div>
+            <div class="pickerLabel neonText">Boards</div>
             <div class="pickerHint">Roll dice → draw exactly N edges → triangles auto-claim.</div>
           </div>
 
+          <!-- colorful board buttons (same palette as index) -->
           <div class="presetList">
             <button
               v-for="p in BOARD_PRESETS"
               :key="p.id"
               class="presetBtn"
               :class="{ active: p.id === selectedBoardId }"
+              :style="{ '--accent': p.accent, '--glow': p.glow, '--cardbg': p.bg, '--chip': p.chip }"
               @mouseenter="audio.playSfx('ui_hover', 0.5)"
               @click="loadBoard(p.id)"
             >
@@ -1068,16 +1131,16 @@ onMounted(() => {
               <span class="zap">🎲</span> Start Match
             </button>
 
-            <button class="btn ghost neonBtn" @click="toggleSfx">
-              {{ audio.sfxEnabled.value ? '🔊 SFX: On' : '🔇 SFX: Off' }}
-            </button>
-            <button class="btn ghost neonBtn" @click="toggleBgm">
-              {{ audio.bgmEnabled.value ? '🎵 BGM: On' : '🚫🎵 BGM: Off' }}
-            </button>
-
-            <div class="note">
-              Dice is capped by remaining valid moves (so you’ll never get stuck with extra lines).
+            <div class="row">
+              <button class="btn ghost neonBtn" @click="toggleSfx">
+                {{ audio.sfxEnabled.value ? '🔊 SFX: On' : '🔇 SFX: Off' }}
+              </button>
+              <button class="btn ghost neonBtn" @click="toggleBgm">
+                {{ audio.bgmEnabled.value ? '🎵 BGM: On' : '🚫🎵 BGM: Off' }}
+              </button>
             </div>
+
+            <div class="note">Dice is capped by what you can actually finish this turn.</div>
           </div>
         </div>
 
@@ -1087,7 +1150,7 @@ onMounted(() => {
             <div class="previewMeta">
               <span class="metaPill">Dots: <b>{{ board.dots.length }}</b></span>
               <span class="metaPill">Triangles: <b>{{ triangles.length }}</b></span>
-              <span class="metaPill">Valid moves left: <b>{{ remainingLegalMovesCount }}</b></span>
+              <span class="metaPill">Moves left: <b>{{ remainingLegalMovesCount }}</b></span>
             </div>
           </div>
 
@@ -1111,7 +1174,7 @@ onMounted(() => {
           </div>
 
           <div class="previewFooter">
-            <div class="tinyTip">Pick your vibe: circle is chill, triangle is savage 😄</div>
+            <div class="tinyTip">Tip: Click a dot → neighbors glow → click neighbor.</div>
           </div>
         </div>
       </div>
@@ -1120,74 +1183,46 @@ onMounted(() => {
     <!-- PLAYING / GAMEOVER -->
     <template v-else>
       <div class="topbar neonCard enter">
-        <div>
+        <div class="topLeft">
           <div class="titleSmall neonText">
-            Triangle Dominion
-            <span class="modeTag">vs AI</span>
-            <span class="modeTag soft">{{ selectedPreset.name }}</span>
+            Triangle Arena <span class="modeTag">vs AI</span> <span class="modeTag soft">{{ selectedPreset.name }}</span>
           </div>
+
           <div class="hud">
-            <span class="hudPill"> Lines: <b class="pulseNum">{{ linesLeft }}</b> </span>
-            <span class="hudPill" v-if="rolled != null"> Rolled: <b class="pulseNum">{{ rolled }}</b> </span>
-            <span class="hudPill"> Moves left: <b class="pulseNum">{{ remainingLegalMovesCount }}</b> </span>
+            <span class="hudPill">Moves left: <b>{{ remainingLegalMovesCount }}</b></span>
+            <span class="hudPill">Lines: <b>{{ linesLeft }}</b></span>
+            <span class="hudPill">Rolled: <b>{{ rolled ?? '—' }}</b></span>
+          </div>
+
+          <div class="toastSlot">
+            <div class="toastMsg" :class="{ show: !!message }">
+              {{ message || ' ' }}
+            </div>
           </div>
         </div>
 
-        <div class="controls">
-          <div class="pill big neonPill turnPulse">
+        <div class="topRight">
+          <div class="turnPill">
             <span class="dot" :style="{ background: currentPlayer.color, boxShadow: `0 0 18px ${currentPlayer.color}` }"></span>
             <b>{{ currentPlayer.name }}</b>
             <span v-if="currentPlayer.isAI" class="muted">(AI)</span>
           </div>
 
-          <!-- Dice -->
-          <button
-            class="diceWrap"
-            :class="{ rolling: diceAnimating, settle: diceSettle, disabled: !canRoll }"
-            @click="canRoll && rollDice()"
-            :title="canRollTitle"
-            aria-label="Roll Dice"
-          >
-            <div class="dice3d">
-              <div class="diceFace">
-                <span
-                  v-for="(p, i) in pipMap[diceValue]"
-                  :key="i"
-                  class="pip"
-                  :style="{ transform: `translate(${p[0] * 16}px, ${p[1] * 16}px)` }"
-                />
-                <div class="diceGloss"></div>
-                <div class="diceShade"></div>
-                <div class="diceRim"></div>
-              </div>
-
-              <div class="diceSide sideRight"></div>
-              <div class="diceSide sideBottom"></div>
-              <div class="diceShadow"></div>
-            </div>
-          </button>
-
           <button class="btn ghost neonBtn" @click="resetMatch" :disabled="phase !== 'playing'">Reset</button>
           <button class="btn ghost neonBtn" @click="backToSetup">Back</button>
-
-          <button class="btn ghost neonBtn" @click="toggleSfx">
-            {{ audio.sfxEnabled.value ? '🔊' : '🔇' }}
-          </button>
-          <button class="btn ghost neonBtn" @click="toggleBgm">
-            {{ audio.bgmEnabled.value ? '🎵' : '🚫🎵' }}
-          </button>
+          <button class="btn ghost neonBtn" @click="toggleSfx">{{ audio.sfxEnabled.value ? '🔊' : '🔇' }}</button>
+          <button class="btn ghost neonBtn" @click="toggleBgm">{{ audio.bgmEnabled.value ? '🎵' : '🚫🎵' }}</button>
         </div>
       </div>
 
       <div class="scorebar enter">
-        <div v-for="p in players" :key="p.id" class="score neonCard scorePulse">
+        <div v-for="p in players" :key="p.id" class="score neonCard">
           <span class="dot" :style="{ background: p.color, boxShadow: `0 0 18px ${p.color}` }"></span>
-          <b>{{ p.name }}</b>
-          <b class="neonScore">{{ p.score }}</b>
+          <b class="scoreName">{{ p.name }}</b>
+          <b class="scoreNum">{{ p.score }}</b>
         </div>
       </div>
 
-      <!-- GAME BOARD -->
       <div class="stage neonStage enter">
         <svg class="svg" :viewBox="`0 0 ${board.width} ${board.height}`" preserveAspectRatio="xMidYMid meet">
           <defs>
@@ -1210,8 +1245,8 @@ onMounted(() => {
             </filter>
 
             <linearGradient id="electricGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#00F0FF" stop-opacity="0.10" />
-              <stop offset="30%" stop-color="#00F0FF" stop-opacity="0.95" />
+              <stop offset="0%" :stop-color="selectedPreset.accent" stop-opacity="0.10" />
+              <stop offset="30%" :stop-color="selectedPreset.accent" stop-opacity="0.95" />
               <stop offset="60%" stop-color="#FF3DA6" stop-opacity="0.95" />
               <stop offset="100%" stop-color="#FF3DA6" stop-opacity="0.10" />
               <animate attributeName="x1" values="0%;100%;0%" dur="1.6s" repeatCount="indefinite" />
@@ -1219,18 +1254,7 @@ onMounted(() => {
             </linearGradient>
           </defs>
 
-          <!-- confetti bursts -->
-          <g>
-            <g v-for="c in confettiBursts" :key="c.id" class="confetti" :style="{ transform: `translate(${c.x}px, ${c.y}px)` }">
-              <circle r="3.8" :fill="c.color" opacity="0.9" />
-              <circle r="2.4" cx="14" cy="-6" :fill="c.color" opacity="0.7" />
-              <circle r="2.6" cx="-12" cy="8" :fill="c.color" opacity="0.7" />
-              <circle r="2.2" cx="8" cy="12" :fill="c.color" opacity="0.6" />
-              <circle r="1.9" cx="-10" cy="-10" :fill="c.color" opacity="0.6" />
-            </g>
-          </g>
-
-          <!-- Claimed triangles -->
+          <!-- triangles -->
           <g>
             <polygon
               v-for="t in triangles"
@@ -1239,12 +1263,11 @@ onMounted(() => {
               :fill="playerFill(t)"
               :opacity="t.owner == null ? 0 : 0.22"
               stroke="transparent"
-              :class="['triFill', recentClaimIds.has(t.id) ? 'triPop' : '']"
               filter="url(#glow)"
             />
           </g>
 
-          <!-- Existing edges -->
+          <!-- edges -->
           <g>
             <line
               v-for="e in edges"
@@ -1254,7 +1277,7 @@ onMounted(() => {
               :x2="dotsById.get(e.b)!.x"
               :y2="dotsById.get(e.b)!.y"
               :style="{ stroke: edgeStroke(e) }"
-              :class="['edgeLine', 'electric', recentEdgeKeys.has(e.key) ? 'edgeZap' : '']"
+              class="edgeLine"
               filter="url(#glow)"
             />
             <line
@@ -1270,7 +1293,7 @@ onMounted(() => {
             />
           </g>
 
-          <!-- Eligible neighbor hints only -->
+          <!-- neighbor hints -->
           <g v-if="selectedDot && phase === 'playing' && !currentPlayer.isAI">
             <line
               v-for="nid in Array.from(eligibleNeighborIds)"
@@ -1279,15 +1302,12 @@ onMounted(() => {
               :y1="selectedDot.y"
               :x2="dotsById.get(nid)!.x"
               :y2="dotsById.get(nid)!.y"
-              stroke="rgba(0,240,255,0.55)"
-              stroke-width="4"
-              stroke-linecap="round"
-              class="hintLine hintPulse"
+              class="hintLine"
               filter="url(#glow)"
             />
           </g>
 
-          <!-- Dots -->
+          <!-- dots -->
           <g>
             <circle
               v-for="d in board.dots"
@@ -1295,51 +1315,56 @@ onMounted(() => {
               :cx="d.x"
               :cy="d.y"
               :r="11"
-              :opacity="
-                selectedDotId == null
-                  ? 1
-                  : d.id === selectedDotId || eligibleNeighborIds.has(d.id)
-                    ? 1
-                    : 0.18
-              "
-              :fill="
-                d.id === selectedDotId
-                  ? '#ffffff'
-                  : eligibleNeighborIds.has(d.id)
-                    ? '#00F0FF'
-                    : '#C9D3E8'
-              "
+              :opacity="selectedDotId == null ? 1 : d.id === selectedDotId || eligibleNeighborIds.has(d.id) ? 1 : 0.18"
+              :fill="d.id === selectedDotId ? '#ffffff' : eligibleNeighborIds.has(d.id) ? selectedPreset.accent : '#C9D3E8'"
               stroke="rgba(0,0,0,0.78)"
               stroke-width="2"
-              :class="[
-                'dotCircle',
-                d.id === selectedDotId ? 'dotSelected' : '',
-                eligibleNeighborIds.has(d.id) ? 'dotNeighbor' : ''
-              ]"
+              class="dotCircle"
               @click.stop="onDotClick(d.id)"
               filter="url(#glow)"
-            />
-
-            <circle
-              v-for="d in board.dots"
-              :key="`h-${d.id}`"
-              :cx="d.x"
-              :cy="d.y"
-              :r="18"
-              class="dotHalo"
-              :opacity="
-                selectedDotId == null
-                  ? 0.10
-                  : d.id === selectedDotId || eligibleNeighborIds.has(d.id)
-                    ? 0.18
-                    : 0.04
-              "
             />
           </g>
         </svg>
       </div>
 
-      <!-- GAMEOVER MODAL -->
+      <!-- bottom dock -->
+      <div class="bottomDock" :class="{ locked: !canRoll }" aria-label="Dice controls">
+        <div class="dockSide">
+          <div class="dockStat">
+            <div class="dockLabel">Lines</div>
+            <div class="dockValue">{{ linesLeft }}</div>
+          </div>
+          <div class="dockStat">
+            <div class="dockLabel">Rolled</div>
+            <div class="dockValue">{{ rolled ?? '—' }}</div>
+          </div>
+        </div>
+
+        <button class="diceBtn" :class="{ disabled: !canRoll, rolling: diceAnimating }" @click="canRoll && rollDice()" :title="canRollTitle">
+          <div class="diceFace">
+            <span v-for="(p, i) in pipMap[diceValue]" :key="i" class="pip" :style="{ transform: `translate(${p[0] * 16}px, ${p[1] * 16}px)` }" />
+            <div class="diceGloss"></div>
+            <div class="diceRim"></div>
+          </div>
+
+          <div class="diceCaption">
+            <div class="capTop" :class="{ off: !canRoll }">{{ canRoll ? 'TAP TO ROLL' : 'WAIT…' }}</div>
+            <div class="capSub">
+              <span v-if="canRoll">Dice capped by feasibility</span>
+              <span v-else>Finish drawing / AI turn</span>
+            </div>
+          </div>
+        </button>
+
+        <div class="dockSide right">
+          <div class="dockStat">
+            <div class="dockLabel">Moves</div>
+            <div class="dockValue">{{ remainingLegalMovesCount }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- gameover -->
       <div v-if="phase === 'gameover'" class="modal">
         <div class="modalCard neonCard pop">
           <div class="modalTitle neonText">Game Over</div>
@@ -1365,11 +1390,21 @@ onMounted(() => {
 </template>
 
 <style>
-/* same styling as before, with reduced pulses */
 *,
 html { box-sizing: border-box; margin: 0; padding: 0; }
 
+:root{
+  --dock-h: 96px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
 .wrap{
+  /* theme vars from selected board */
+  --accent: #00F0FF;
+  --glow: rgba(0,240,255,0.30);
+  --cardbg: radial-gradient(900px 420px at 20% 20%, rgba(0,240,255,0.18), transparent 62%);
+  --chip: rgba(0,240,255,0.12);
+
   min-height: 100vh;
   color: #fff;
   padding: 16px;
@@ -1381,6 +1416,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* Background */
 .bgEnergy{ position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+.bgTint{ position:absolute; inset: 0; opacity: 0.55; }
 .bgAurora{ position: absolute; inset: -20%; filter: blur(26px); opacity: 0.8; mix-blend-mode: screen; transform: translateZ(0); }
 .bgAurora.a1{
   background:
@@ -1440,7 +1476,7 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .enter{ animation: riseIn 420ms ease-out both; }
 @keyframes riseIn{ from{ transform: translateY(12px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
 
-/* UI cards */
+/* cards */
 .neonCard{
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.06);
@@ -1451,7 +1487,6 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
     0 0 46px rgba(255,61,166,0.08),
     inset 0 0 26px rgba(0,0,0,0.44);
   backdrop-filter: blur(12px);
-  position: relative;
   overflow: hidden;
 }
 .neonText{ text-shadow: 0 0 18px rgba(0,240,255,0.34), 0 0 28px rgba(255,61,166,0.16); }
@@ -1460,21 +1495,17 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .title{ font-size: 34px; font-weight: 950; letter-spacing: -0.02em; display:flex; align-items:center; gap: 10px; }
 .subtitle{ margin-top: 8px; opacity: 0.88; }
 
-.topbar{ display:flex; gap: 12px; align-items:center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; padding: 14px; }
+/* topbar */
+.topbar{
+  margin-bottom: 10px;
+  padding: 14px;
+  display:flex;
+  align-items:flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .titleSmall{ font-size: 18px; font-weight: 950; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
-.hud{ margin-top: 8px; display:flex; gap: 10px; flex-wrap: wrap; }
-.hudPill{
-  display:inline-flex; gap: 8px; align-items: baseline;
-  padding: 7px 11px; border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.05);
-  font-size: 12px; opacity: 0.92;
-}
-.pulseNum{
-  text-shadow: 0 0 14px rgba(0,240,255,0.18);
-  animation: numPulse 1.8s ease-in-out infinite;
-}
-@keyframes numPulse{ 0%,100%{ filter: brightness(1); } 50%{ filter: brightness(1.06); } }
 
 .modeTag{
   font-size: 12px; padding: 3px 8px; border-radius: 999px;
@@ -1484,34 +1515,49 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 }
 .modeTag.soft{ border-color: rgba(255,61,166,0.30); background: rgba(255,61,166,0.10); }
 
-.controls{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
-.scorebar{ display:flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.score{ display:flex; gap: 8px; align-items:center; padding: 10px 12px; border-radius: 14px; }
-.scorePulse{ animation: cardBreath 3.4s ease-in-out infinite; }
-@keyframes cardBreath{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-0.6px); } }
-.neonScore{ text-shadow: 0 0 14px rgba(0,240,255,0.18), 0 0 12px rgba(255,61,166,0.10); }
+.hud{ margin-top: 8px; display:flex; gap: 10px; flex-wrap: wrap; }
+.hudPill{
+  display:inline-flex; gap: 8px; align-items: baseline;
+  padding: 7px 11px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.28);
+  font-size: 12px;
+  color: rgba(255,255,255,0.92);
+}
+.hudPill b{ color:#fff; text-shadow: 0 0 14px rgba(0,240,255,0.18); }
 
-.muted{ opacity: 0.7; }
+.toastSlot{ height: 44px; margin-top: 10px; }
+.toastMsg{
+  height: 44px;
+  display:flex;
+  align-items:center;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.34);
+  color: rgba(255,255,255,0.96);
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.toastMsg.show{ opacity: 1; transform: translateY(0); }
+
+.topRight{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; justify-content:flex-end; }
+.turnPill{
+  display:inline-flex; align-items:center; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.26);
+  color: #fff;
+  font-weight: 950;
+}
+.muted{ opacity: 0.72; }
 .dot{ width: 12px; height: 12px; border-radius: 999px; display:inline-block; }
 
-.pill{
-  padding: 8px 10px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
-  border-radius: 999px;
-  font-size: 13px;
-  display:inline-flex;
-  gap: 8px;
-  align-items:center;
-}
-.neonPill{ box-shadow: 0 0 14px rgba(0,240,255,0.07); }
-.pill.big{ padding: 10px 12px; }
-.turnPulse{ animation: turnPulse 1.9s ease-in-out infinite; }
-@keyframes turnPulse{
-  0%,100%{ box-shadow: 0 0 14px rgba(0,240,255,0.08); transform: translateY(0); }
-  50%{ box-shadow: 0 0 20px rgba(0,240,255,0.12); transform: translateY(-0.6px); }
-}
-
+/* buttons */
 .btn{
   border: 1px solid rgba(255,255,255,0.18);
   background: rgba(255,255,255,0.10);
@@ -1531,37 +1577,72 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 .btn.big{ padding: 12px 14px; border-radius: 14px; font-size: 14px; }
 .zap{ filter: drop-shadow(0 0 12px rgba(0,240,255,0.34)); }
 
-/* setup layout */
+/* setup */
 .setupGrid{ margin-top: 14px; display:grid; grid-template-columns: 1fr 1.1fr; gap: 12px; }
 @media (max-width: 980px){ .setupGrid{ grid-template-columns: 1fr; } }
 .boardPicker{ padding: 14px; }
 .pickerLabel{ font-size: 16px; font-weight: 950; }
 .pickerHint{ font-size: 12px; opacity: 0.82; }
 .presetList{ margin-top: 12px; display:flex; flex-direction: column; gap: 10px; }
+
+/* colorful preset cards */
 .presetBtn{
+  --accent: #00F0FF;
+  --glow: rgba(0,240,255,0.28);
+  --cardbg: radial-gradient(900px 420px at 20% 20%, rgba(0,240,255,0.18), transparent 62%);
+  --chip: rgba(0,240,255,0.12);
+
   width: 100%;
   text-align: left;
-  border-radius: 14px;
+  border-radius: 16px;
   border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
+  background: var(--cardbg), rgba(255,255,255,0.06);
   color: #fff;
   padding: 12px;
   cursor: pointer;
-  transition: transform 140ms ease, box-shadow 180ms ease, background 180ms ease;
+  transition: transform 140ms ease, box-shadow 180ms ease, background 180ms ease, filter 180ms ease;
+  position: relative;
+  overflow: hidden;
 }
-.presetBtn:hover{ transform: translateY(-1px); background: rgba(255,255,255,0.09); box-shadow: 0 0 0 1px rgba(0,240,255,0.14), 0 0 26px rgba(0,240,255,0.10); }
-.presetBtn.active{ border-color: rgba(0,240,255,0.32); background: rgba(0,240,255,0.10); }
+.presetBtn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 28px var(--glow);
+  filter: brightness(1.03);
+}
+.presetBtn.active{
+  border-color: rgba(255,255,255,0.18);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.10), 0 0 30px var(--glow);
+}
+.presetBtn.active::after{
+  content:"";
+  position:absolute;
+  inset: 0;
+  border-radius: 16px;
+  pointer-events:none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  opacity: 0.7;
+}
 .presetHead{ display:flex; align-items:center; justify-content: space-between; gap: 10px; }
-.presetName{ font-weight: 950; }
-.presetTag{ font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.24); opacity: 0.9; }
-.presetDesc{ margin-top: 6px; font-size: 12px; opacity: 0.84; }
+.presetName{ font-weight: 1000; letter-spacing:-0.01em; }
+.presetTag{
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--chip);
+  opacity: 0.95;
+}
+.presetDesc{ margin-top: 6px; font-size: 12px; opacity: 0.88; }
+
 .bigActions{ margin-top: 12px; display:flex; flex-direction: column; gap: 10px; }
-.note{ font-size: 12px; opacity: 0.80; }
+.row{ display:flex; gap: 10px; flex-wrap: wrap; }
+.note{ font-size: 12px; opacity: 0.85; }
 
 .preview{ padding: 14px; }
 .previewTitle{ font-size: 18px; font-weight: 950; }
 .previewMeta{ display:flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.metaPill{ padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.05); font-size: 12px; opacity: 0.92; }
+.metaPill{ padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.28); font-size: 12px; opacity: 0.95; color: rgba(255,255,255,0.92); }
+.metaPill b{ color:#fff; text-shadow: 0 0 14px rgba(0,240,255,0.16); }
 
 .previewStage{
   margin-top: 12px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.10);
@@ -1575,39 +1656,15 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
 @keyframes pvFlow{ from{ stroke-dashoffset: 0; } to{ stroke-dashoffset: -64; } }
 .pvDot{ fill: rgba(255,255,255,0.88); stroke: rgba(0,0,0,0.75); stroke-width: 2; filter: drop-shadow(0 0 10px rgba(0,240,255,0.16)); }
 .previewFooter{ margin-top: 10px; }
-.tinyTip{ font-size: 12px; opacity: 0.82; }
+.tinyTip{ font-size: 12px; opacity: 0.88; }
 
-/* Dice */
-.diceWrap{
-  display:flex; align-items:center; padding: 10px; border-radius: 18px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(0,0,0,0.30);
-  box-shadow: 0 0 0 1px rgba(0,240,255,0.12), 0 0 34px rgba(0,240,255,0.14), 0 0 28px rgba(255,61,166,0.10);
-  cursor: pointer; transition: transform 140ms ease, box-shadow 180ms ease, filter 180ms ease;
-  -webkit-tap-highlight-color: transparent; user-select: none; touch-action: manipulation;
-}
-.diceWrap:hover{ transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(0,240,255,0.18), 0 0 46px rgba(0,240,255,0.20), 0 0 34px rgba(255,61,166,0.14); }
-.diceWrap:active{ transform: translateY(0); }
-.diceWrap.disabled{ opacity: 0.55; cursor: not-allowed; filter: saturate(0.85); }
+/* scorebar */
+.scorebar{ display:flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.score{ display:flex; gap: 8px; align-items:center; padding: 10px 12px; border-radius: 14px; }
+.scoreName{ opacity: 0.92; }
+.scoreNum{ margin-left: 6px; font-size: 18px; text-shadow: 0 0 14px rgba(0,240,255,0.18), 0 0 12px rgba(255,61,166,0.10); }
 
-.dice3d{ position: relative; width: 72px; height: 72px; perspective: 820px; display:grid; place-items:center; }
-.diceShadow{ position:absolute; width: 56px; height: 18px; border-radius: 999px; bottom: 4px; filter: blur(10px); background: rgba(0,0,0,0.60); opacity: 0.55; transform: translateZ(-20px); }
-.diceFace{
-  width: 62px; height: 62px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.22);
-  position: relative; display:grid; place-items:center; transform-style: preserve-3d;
-  background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.06));
-  box-shadow: inset 0 0 20px rgba(0,0,0,0.55), 0 10px 18px rgba(0,0,0,0.38), 0 0 22px rgba(0,240,255,0.16), 0 0 18px rgba(255,61,166,0.10);
-  transform: rotateX(14deg) rotateY(-14deg) translateZ(8px);
-}
-.diceSide{ position:absolute; pointer-events:none; opacity: 0.95; }
-.sideRight{ width: 12px; height: 58px; right: 3px; top: 7px; border-radius: 10px; background: linear-gradient(180deg, rgba(180,190,210,0.32), rgba(20,24,34,0.55)); transform: rotateY(-72deg) translateZ(31px); }
-.sideBottom{ width: 58px; height: 12px; left: 7px; bottom: 3px; border-radius: 10px; background: linear-gradient(90deg, rgba(160,170,190,0.26), rgba(14,16,22,0.62)); transform: rotateX(72deg) translateZ(31px); }
-.diceRim{ position:absolute; inset: 0; border-radius: 20px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 0 16px rgba(0,0,0,0.28); pointer-events:none; }
-.diceGloss{ position:absolute; inset: 7px 9px auto 9px; height: 20px; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,0.42), rgba(255,255,255,0.00)); opacity: 0.95; pointer-events: none; }
-.diceShade{ position:absolute; inset: auto 6px 6px 6px; height: 16px; border-radius: 14px; background: radial-gradient(80px 30px at 40% 0%, rgba(0,0,0,0), rgba(0,0,0,0.35)); opacity: 0.92; pointer-events:none; }
-.pip{ width: 9px; height: 9px; border-radius: 999px; background: rgba(245,252,255,0.96); position: absolute; box-shadow: 0 0 14px rgba(0,240,255,0.38); }
-
-/* Board */
+/* board */
 .neonStage{
   border: 1px solid rgba(255,255,255,0.12);
   background:
@@ -1620,62 +1677,172 @@ html { box-sizing: border-box; margin: 0; padding: 0; }
   box-shadow: inset 0 0 34px rgba(0,0,0,0.56), 0 0 40px rgba(0,240,255,0.10), 0 0 36px rgba(255,61,166,0.08);
   position: relative;
   overflow: hidden;
+  margin-bottom: calc(var(--dock-h) + var(--safe-b) + 8px);
 }
-.svg{ width: 100%; height: 75vh; display:block; }
+.svg{ width: 100%; height: 72vh; display:block; }
 
-/* edges */
 .edgeLine{ stroke-width: 5; stroke-linecap: round; opacity: 0.95; filter: drop-shadow(0 0 14px rgba(0,240,255,0.18)); }
 .edgeCurrent{ stroke-width: 3.4; stroke-linecap: round; opacity: 0.60; stroke-dasharray: 10 12; animation: currentFlow 1.0s linear infinite; mix-blend-mode: screen; }
 @keyframes currentFlow{ from{ stroke-dashoffset: 0; opacity: 0.52; } to{ stroke-dashoffset: -44; opacity: 0.72; } }
-.edgeLine.electric{ stroke-dasharray: 12 10; animation: edgeShiver 1.45s ease-in-out infinite; }
-@keyframes edgeShiver{ 0%,100%{ stroke-dashoffset: 0; filter: brightness(1); } 50%{ stroke-dashoffset: -22; filter: brightness(1.12); } }
-.edgeZap{ animation: edgeZap 520ms ease-out both; }
-@keyframes edgeZap{ 0%{ stroke-width: 1; opacity: 0.25; filter: brightness(1.5); } 45%{ stroke-width: 6.6; opacity: 1; filter: brightness(1.25); } 100%{ stroke-width: 5; opacity: 0.95; filter: brightness(1); } }
 
-/* triangles */
-.triFill{ transform-box: fill-box; transform-origin: center; transition: opacity 180ms ease; }
-.triPop{ animation: triPop 520ms cubic-bezier(.18,.9,.18,1.02); filter: drop-shadow(0 0 20px rgba(0,240,255,0.20)); }
-@keyframes triPop{ 0%{ transform: scale(0.90); opacity: 0.06; } 36%{ transform: scale(1.07); opacity: 0.30; } 100%{ transform: scale(1.00); opacity: 0.22; } }
-
-/* neighbor hint */
-.hintLine{ filter: drop-shadow(0 0 14px rgba(0,240,255,0.20)); transform-origin: center; }
-.hintPulse{ animation: hintZoom 1.3s ease-in-out infinite; }
-@keyframes hintZoom{ 0%,100%{ transform: scale(1); opacity: 0.34; } 50%{ transform: scale(1.03); opacity: 0.52; } }
-
-/* dots */
-.dotCircle{ cursor:pointer; transition: opacity 160ms ease, filter 160ms ease; transform-origin: center; }
-.dotSelected{ animation: dotZoomSel 1.4s ease-in-out infinite; }
-@keyframes dotZoomSel{
-  0%,100%{ transform: scale(1.03); filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
-  50%{ transform: scale(1.07); filter: brightness(1.24) drop-shadow(0 0 22px rgba(0,240,255,0.24)); }
+.hintLine{
+  stroke: color-mix(in srgb, var(--accent) 70%, white 30%);
+  stroke-width: 4;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 14px rgba(0,240,255,0.20));
+  animation: hintPulse 1.2s ease-in-out infinite;
 }
-.dotNeighbor{ animation: dotZoomNb 1.6s ease-in-out infinite; }
-@keyframes dotZoomNb{
-  0%,100%{ transform: scale(1.01); filter: brightness(1.12) drop-shadow(0 0 14px rgba(0,240,255,0.16)); }
-  50%{ transform: scale(1.04); filter: brightness(1.18) drop-shadow(0 0 18px rgba(0,240,255,0.22)); }
+@keyframes hintPulse{ 0%,100%{ opacity: 0.34; } 50%{ opacity: 0.56; } }
+.dotCircle{ cursor:pointer; transition: opacity 160ms ease, filter 160ms ease; }
+.dotCircle:hover{ filter: brightness(1.14); }
+
+/* bottom dock */
+.bottomDock{
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  padding-bottom: calc(10px + var(--safe-b));
+  padding-top: 10px;
+  padding-left: 10px;
+  padding-right: 10px;
+
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background:
+    radial-gradient(900px 320px at 25% 20%, rgba(0,240,255,0.14), transparent 62%),
+    radial-gradient(900px 320px at 75% 70%, rgba(255,61,166,0.10), transparent 66%),
+    rgba(0,0,0,0.64);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 0 1px rgba(0,240,255,0.10),
+    0 0 34px rgba(0,240,255,0.10),
+    0 0 30px rgba(255,61,166,0.08);
+
+  display:grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items:center;
+  gap: 10px;
+
+  z-index: 40;
+}
+@media (max-width: 520px){
+  .bottomDock{
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "dice dice"
+      "left right";
+  }
+  .dockSide{ grid-area: left; }
+  .dockSide.right{ grid-area: right; justify-self: end; }
+  .diceBtn{ grid-area: dice; justify-self: center; }
 }
 
-.dotHalo{
-  fill: transparent;
-  stroke: rgba(0,240,255,0.12);
-  stroke-width: 2;
-  stroke-dasharray: 14 14;
-  animation: haloSpin 2.8s linear infinite;
-  filter: blur(0.2px);
+.dockSide{ display:flex; gap: 10px; align-items:center; }
+.dockSide.right{ justify-content: flex-end; }
+
+.dockStat{
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.28);
+  min-width: 74px;
+  text-align:center;
+}
+.dockLabel{
+  font-size: 11px;
+  opacity: 0.86;
+  color: rgba(255,255,255,0.92);
+}
+.dockValue{
+  margin-top: 2px;
+  font-size: 18px;
+  font-weight: 1000;
+  color: #fff;
+  text-shadow: 0 0 14px rgba(0,240,255,0.18);
+}
+
+.diceBtn{
+  display:flex;
+  align-items:center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 180ms ease, filter 180ms ease, background 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.diceBtn:hover{
+  transform: translateY(-1px);
+  background: rgba(255,255,255,0.09);
+  box-shadow: 0 0 0 1px rgba(0,240,255,0.12), 0 0 22px rgba(0,240,255,0.10);
+}
+.diceBtn:active{ transform: translateY(0) scale(0.995); }
+.diceBtn.disabled{ opacity: 0.55; cursor: not-allowed; filter: saturate(0.85); }
+
+/* Dice */
+.diceFace{
+  width: 60px; height: 60px;
+  border-radius: 18px;
+  position: relative;
+  background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(235,240,255,0.80));
+  border: 1px solid rgba(0,240,255,0.28);
+  box-shadow:
+    inset 0 0 18px rgba(0,0,0,0.16),
+    0 10px 16px rgba(0,0,0,0.28),
+    0 0 18px rgba(0,240,255,0.14),
+    0 0 14px rgba(255,61,166,0.10);
+  transform: rotateX(12deg) rotateY(-10deg);
+}
+.pip{
+  width: 9px; height: 9px;
+  border-radius: 999px;
+  position:absolute;
+  left: 50%; top: 50%;
+  margin-left: -4.5px;
+  margin-top: -4.5px;
+  background: rgba(18,22,32,0.92);
+  box-shadow: 0 0 10px rgba(0,240,255,0.16);
+}
+.diceGloss{
+  position:absolute;
+  inset: 8px 10px auto 10px;
+  height: 18px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.60), rgba(255,255,255,0.00));
+  opacity: 0.9;
   pointer-events:none;
 }
-@keyframes haloSpin{ from{ stroke-dashoffset: 0; opacity: 0.08; } to{ stroke-dashoffset: -56; opacity: 0.18; } }
+.diceRim{
+  position:absolute; inset: 0;
+  border-radius: 18px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22);
+  pointer-events:none;
+}
 
-/* confetti */
-.confetti{ animation: confPop 650ms ease-out both; transform-origin: center; }
-@keyframes confPop{
-  0%{ opacity: 0; transform: translate(0,0) scale(0.6); }
-  45%{ opacity: 1; transform: translate(0,-10px) scale(1); }
-  100%{ opacity: 0; transform: translate(0,-22px) scale(1.05); }
+.diceCaption{ text-align:left; }
+.capTop{
+  font-size: 12px;
+  font-weight: 1000;
+  letter-spacing: 0.10em;
+  color: var(--accent);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 55%, rgba(255,255,255,0.0));
+}
+.capTop.off{
+  color: rgba(255,255,255,0.82);
+  text-shadow: none;
+  opacity: 0.85;
+}
+.capSub{
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.86);
 }
 
 /* Modal */
-.modal{ position: fixed; inset: 0; background: rgba(0,0,0,0.62); display: grid; place-items: center; padding: 16px; z-index: 50; }
+.modal{ position: fixed; inset: 0; background: rgba(0,0,0,0.62); display: grid; place-items: center; padding: 16px; z-index: 60; }
 .modalCard{ width: min(520px, 100%); padding: 16px; border-radius: 18px; }
 .pop{ animation: popIn 240ms ease-out both; }
 @keyframes popIn{ from{ transform: scale(0.96); opacity: 0; } to{ transform: scale(1); opacity: 1; } }
